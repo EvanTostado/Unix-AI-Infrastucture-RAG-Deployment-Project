@@ -1,0 +1,89 @@
+services:
+  # -----------------------------------------------------------------
+  # 1. One-Time Model Init Container (Idempotent Pre-Staging)
+  # -----------------------------------------------------------------
+  ollama-init:
+    image: ollama/ollama:0.5.7 #what the containers running
+    container_name: ollama-init
+    volumes:
+      - ./models:/models #this volume will need to be changed to however the Data manager wants, this is also on the ollama service
+    environment:
+      - OLLAMA_MODELS=/models
+    entrypoint: ["/bin/sh", "-c"] #enters the shell
+    command: #runs commands to install our 2 models
+      - |
+        /bin/ollama serve &
+        sleep 5
+        /bin/ollama pull qwen2.5:1.5b
+        /bin/ollama pull nomic-embed-text
+        echo "Models staged in /models successfully!"
+    networks: #has internet access
+      - ai_egress_net
+    restart: "no"
+
+  # -----------------------------------------------------------------
+  # 2. Primary AI Inference Replica, Will Make 2 replicas
+  # -----------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:0.5.7 #what the containers running
+    #container_name: ollama-1 #cannot be used because will be using replicas
+    restart: always
+    depends_on: #waits for ollama init to finish befor starting 
+      ollama-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./models:/models
+    environment: #env variables
+      - OLLAMA_MODELS=/models #points to models
+      - OLLAMA_HOST=0.0.0.0:11434 #port 
+      - OLLAMA_NUM_PARALLEL=2 #can run both models 
+      - OLLAMA_KEEP_ALIVE=24h #always running 
+    deploy: #makes 2 containers with the same values 
+      mode: replicated
+      replicas: 2
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 3500M
+        reservations:
+          cpus: "1.0"
+          memory: 2048M
+    healthcheck: #checks if the models running 
+      test: ["CMD-SHELL", "/bin/ollama run qwen2.5:1.5b 'hi' > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 20s
+    networks: #no internet access
+      - ai_internal_net
+
+  # -----------------------------------------------------------------
+  # 4. Internal AI Load Balancer (Nginx)
+  # -----------------------------------------------------------------
+  ai-lb:
+    image: nginx:1.27.3-alpine #what the containers running
+    container_name: ai-lb
+    restart: always
+    depends_on: #waits for model to run before starting
+      - ollama
+    volumes:
+      - ./nginx-ai.conf:/etc/nginx/nginx.conf:ro #points to its own script
+    ports: 
+      - "127.0.0.1:11434:11434" #may change depending on the setup
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    networks: #internet access and model access
+      - ai_internal_net
+      - app_backend_net
+
+networks: #defines the networks 
+  ai_egress_net:
+    driver: bridge
+  ai_internal_net:
+    driver: bridge
+    internal: true
+  app_backend_net:
+    driver: bridge

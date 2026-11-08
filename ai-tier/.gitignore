@@ -1,0 +1,19 @@
+# Ignore the 1.3GB downloaded Ollama models!
+models/
+**/models/
+
+# Ignore Python virtual environments and cache
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Ignore Secrets & Terraform state (Required by Project Rubric)
+.env
+*.env
+*.pem
+*.key
+*credentials*.json
+*.tfstate
+*.tfstate.*
+.terraform/
