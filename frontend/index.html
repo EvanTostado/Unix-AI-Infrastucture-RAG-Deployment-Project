@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Python troubleshooting · Sample prototype</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="sample-responses.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">PYTHON / TROUBLESHOOTING</p>
+      <h1>A little clarity for your next fix.</h1>
+      <p>Describe your question, share your code, and include the error.</p>
+    </header>
+    <aside class="notice" aria-label="Sample mode notice">
+      <strong>Sample mode — no live AI connected.</strong>
+      Only the built-in TypeError example is supported. Responses are prewritten;
+      your code is never executed or sent anywhere.
+    </aside>
+    <div class="workspace">
+      <section class="card" aria-labelledby="input-title">
+        <div class="section-heading">
+          <h2 id="input-title">Your question</h2>
+          <button id="load-example" type="button" class="secondary">Load example</button>
+        </div>
+        <form id="help-form">
+          <label for="question">What do you need help with?</label>
+          <textarea id="question" rows="3" maxlength="2000" required placeholder="Explain what you expected and what happened."></textarea>
+          <label for="code">Python code</label>
+          <p id="code-hint" class="hint">Paste your code as written. Indentation and line breaks are preserved.</p>
+          <textarea id="code" class="code" rows="7" maxlength="12000" required spellcheck="false" autocapitalize="off" aria-describedby="code-hint" placeholder="Paste your Python code here"></textarea>
+          <label for="error">Traceback or error message</label>
+          <textarea id="error" class="code" rows="4" maxlength="12000" required spellcheck="false" placeholder="Paste the error message here"></textarea>
+          <p id="validation" class="validation" role="alert"></p>
+          <button id="submit" type="submit">Show sample explanation</button>
+          <p class="hint">Demonstrates one example only. Other code cannot be diagnosed in sample mode.</p>
+        </form>
+      </section>
+      <section class="card" aria-labelledby="answer-title" id="response-panel" aria-busy="false">
+        <p class="eyebrow">SAMPLE CONTENT</p>
+        <h2 id="answer-title">Explanation</h2>
+        <p id="status" role="status" aria-live="polite">Load the example to explore a prewritten explanation.</p>
+        <div id="answer"></div>
+        <section class="sources" aria-labelledby="sources-title">
+          <h3 id="sources-title">Sources · sample content</h3>
+          <p>No retrieval is connected. Explanations are manually written demo content, not retrieved sources.</p>
+        </section>
+      </section>
+    </div>
+    <footer>Frontend prototype · Local sample responses only</footer>
+  </main>
+</body>
+</html>
