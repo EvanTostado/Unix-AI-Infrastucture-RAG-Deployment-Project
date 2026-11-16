@@ -1,7 +1,7 @@
 services:
   db: #Database container named postgres-pgvector
     image: pgvector/pgvector:pg17 #Prebuilt Postgres based on v17
-    container_name: postgres-pgvector 
+    container_name: postgres-pgvector
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: 1234567
@@ -23,3 +23,4 @@ services:
 networks:
   rag-network:
     driver: bridge
+    
