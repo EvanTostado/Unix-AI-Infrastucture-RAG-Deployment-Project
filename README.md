@@ -52,6 +52,33 @@ The AI client's prompt, fallback message, and standalone test still refer to Lin
 
 ## Intended RAG workflow
 
+The following provisional diagram describes the **proposed target architecture**. The web tier is intended to scale automatically from **3 to 6 replicas**; that scaling and the complete architecture are not yet implemented in this repository.
+
+```mermaid
+flowchart TD
+    user["User / Browser"] --> webLB["Web Load Balancer<br/>Nginx / ingress"]
+
+    subgraph web["Web tier — planned autoscaling: 3–6 replicas"]
+        web1["Web 1"]
+        web2["Web 2"]
+        web3["Web 3"]
+    end
+
+    webLB --> web1
+    webLB --> web2
+    webLB --> web3
+    web1 --> api["Application API / RAG Orchestrator"]
+    web2 --> api
+    web3 --> api
+
+    api --> vectorDB[("Vector Database<br/>Document chunks and embeddings")]
+    api --> aiLB["AI Load Balancer"]
+    aiLB --> ollama1["Ollama 1"]
+    aiLB --> ollama2["Ollama 2"]
+```
+
+The web load balancer distributes browser traffic across the web replicas. The application API coordinates retrieval from the vector database and inference through the separate AI load balancer. The steps below describe the intended request and response workflow; the diagram's arrows show routing and service dependencies.
+
 1. Prepare and index documentation relevant to the Python topics above.
 2. Accept the user's question, code, and traceback through the frontend and an application API.
 3. Generate an embedding and retrieve relevant documentation chunks from a vector store.
