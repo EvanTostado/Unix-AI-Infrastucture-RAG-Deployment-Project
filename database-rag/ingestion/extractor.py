@@ -7,7 +7,9 @@ Uses PyMuPDF for text extraction and optional OCR for images.
 import fitz  # PyMuPDF
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from PyPDF2 import PdrMerger
 import re
+
 
 from .base import BaseExtractor, ExtractedDocument
 
@@ -44,11 +46,33 @@ class PDFExtractor(BaseExtractor):
                     "Install with: pip install pytesseract Pillow"
                 )
 
+    def merge_pdfs(pdf1_path:/workspaces/Unix-AI-Infrastucture-RAG-Deployment-Project/database-rag/documents/python-basics-sample-chapters.pdf, pdf2_path: database-rag/documents/thinkpython2.pdf, output_path):
+        """
+        Merging of PDFs.
+        """
+        try:
+            if not os.path.isfile(pdf1_path):
+                raise FileNotFoundError(f"File not found: {pdf1_path}")
+            if not os.path.isfile(pdf2_path):
+                raise FileNotFoundError(f"File not found: {pdf2_path}")
+
+            merger = PdfMerger()
+
+            merger.append(pdf1_path)
+            merger.append(pdf2_path)
+
+            merger.write(output_path)
+            merger.close()
+
+        except Exception as e:
+            print(f"Error: {e}")
+
+        
     def can_handle(self, mimetype: str) -> bool:
         """Check if this extractor handles the given MIME type."""
         return mimetype in self.supported_mimetypes
 
-    def extract(self, file_path: Path) -> ExtractedDocument:
+    def extract(self, file_path: output_path) -> ExtractedDocument:
         """
         Extract text and metadata from a PDF file.
 
