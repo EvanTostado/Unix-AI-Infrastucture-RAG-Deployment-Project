@@ -1,22 +1,39 @@
-# src/pipeline/batch.py
 """
-Batch processing pipeline for document ingestion.
-Handles parallel processing, progress tracking, and error recovery.
+Batch document ingestion pipeline.
+
+Features:
+- Parallel processing
+- Batch embedding generation
+- Checkpointing
+- Progress tracking
+- Retry support
+- PostgreSQL/pgvector compatible
 """
 
-import asyncio
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import List, Dict, Any, Optional, Callable
-from datetime import datetime
 import json
 import logging
+import time
+
+from pathlib import Path
+from datetime import datetime
 from enum import Enum
+from dataclasses import dataclass, field
+
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    as_completed
+)
+
+from typing import (
+    List,
+    Dict,
+    Any,
+    Optional,
+    Callable
+)
 
 
 class DocumentStatus(Enum):
-    """Status of a document in the processing pipeline."""
     PENDING = "pending"
     PROCESSING = "processing"
     COMPLETED = "completed"
@@ -26,317 +43,518 @@ class DocumentStatus(Enum):
 
 @dataclass
 class ProcessingResult:
-    """Result of processing a single document."""
+
     file_path: str
     status: DocumentStatus
+
     chunks_created: int = 0
+
     error_message: Optional[str] = None
+
     processing_time_ms: float = 0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    metadata: Dict[str, Any] = field(
+        default_factory=dict
+    )
 
 
 @dataclass
 class BatchProgress:
-    """Progress tracking for batch processing."""
+
     total_documents: int
+
     processed: int = 0
     successful: int = 0
     failed: int = 0
     skipped: int = 0
-    start_time: datetime = field(default_factory=datetime.now)
+
+    start_time: datetime = field(
+        default_factory=datetime.now
+    )
 
     @property
     def completion_percentage(self) -> float:
-        """Calculate completion percentage."""
+
         if self.total_documents == 0:
             return 100.0
-        return (self.processed / self.total_documents) * 100
+
+        return (
+            self.processed
+            / self.total_documents
+        ) * 100
 
     @property
     def elapsed_seconds(self) -> float:
-        """Calculate elapsed time in seconds."""
-        return (datetime.now() - self.start_time).total_seconds()
+
+        return (
+            datetime.now()
+            - self.start_time
+        ).total_seconds()
 
     @property
     def documents_per_second(self) -> float:
-        """Calculate processing speed."""
+
         if self.elapsed_seconds == 0:
-            return 0
-        return self.processed / self.elapsed_seconds
+            return 0.0
+
+        return (
+            self.processed
+            / self.elapsed_seconds
+        )
 
 
 class BatchProcessor:
-    """
-    Processes documents in batches with parallel execution.
-    Handles retries, progress tracking, and checkpointing.
-    """
 
     def __init__(
         self,
         extractor_registry,
         chunker,
-        embedding_function: Callable[[str], List[float]],
+        embedding_function,
         vector_store,
+        metadata_extractor=None,
         max_workers: int = 4,
         batch_size: int = 100,
         checkpoint_dir: Optional[Path] = None
     ):
-        """
-        Initialize the batch processor.
 
-        Args:
-            extractor_registry: Registry of document extractors
-            chunker: Text chunker instance
-            embedding_function: Function to generate embeddings
-            vector_store: Vector database client
-            max_workers: Maximum parallel workers
-            batch_size: Documents to process before checkpointing
-            checkpoint_dir: Directory for checkpoint files
-        """
         self.registry = extractor_registry
         self.chunker = chunker
         self.embed = embedding_function
+
         self.vector_store = vector_store
+        self.metadata_extractor = metadata_extractor
+
         self.max_workers = max_workers
         self.batch_size = batch_size
+
         self.checkpoint_dir = checkpoint_dir
 
-        self.logger = logging.getLogger(__name__)
+        self.results = []
         self.progress = None
-        self.results: List[ProcessingResult] = []
+
+        self.logger = logging.getLogger(__name__)
 
     async def process_directory(
         self,
         directory: Path,
         recursive: bool = True,
-        file_patterns: List[str] = None,
-        progress_callback: Callable[[BatchProgress], None] = None
+        file_patterns: Optional[List[str]] = None,
+        progress_callback: Optional[
+            Callable[[BatchProgress], None]
+        ] = None
     ) -> List[ProcessingResult]:
-        """
-        Process all documents in a directory.
 
-        Args:
-            directory: Directory containing documents
-            recursive: Whether to process subdirectories
-            file_patterns: Glob patterns for file selection
-            progress_callback: Function called with progress updates
+        documents = self._discover_documents(
+            directory,
+            recursive,
+            file_patterns
+        )
 
-        Returns:
-            List of processing results
-        """
-        # Discover documents
-        documents = self._discover_documents(directory, recursive, file_patterns)
-
-        self.logger.info(f"Discovered {len(documents)} documents to process")
-
-        # Load checkpoint if exists
         processed_files = self._load_checkpoint()
-        documents = [d for d in documents if str(d) not in processed_files]
 
-        self.logger.info(f"Processing {len(documents)} documents (skipping {len(processed_files)} already processed)")
+        documents = [
+            doc
+            for doc in documents
+            if str(doc) not in processed_files
+        ]
 
-        # Initialize progress tracking
-        self.progress = BatchProgress(total_documents=len(documents))
+        self.logger.info(
+            f"Processing {len(documents)} files"
+        )
+
+        self.progress = BatchProgress(
+            total_documents=len(documents)
+        )
+
         self.results = []
 
-        # Process in batches
-        for batch_start in range(0, len(documents), self.batch_size):
-            batch = documents[batch_start:batch_start + self.batch_size]
+        for batch_start in range(
+            0,
+            len(documents),
+            self.batch_size
+        ):
 
-            # Process batch in parallel
-            batch_results = await self._process_batch(batch)
+            batch = documents[
+                batch_start:
+                batch_start + self.batch_size
+            ]
+
+            batch_results = await self._process_batch(
+                batch
+            )
+
             self.results.extend(batch_results)
 
-            # Update progress
             for result in batch_results:
+
                 self.progress.processed += 1
-                if result.status == DocumentStatus.COMPLETED:
+
+                if (
+                    result.status
+                    == DocumentStatus.COMPLETED
+                ):
                     self.progress.successful += 1
-                elif result.status == DocumentStatus.FAILED:
+
+                elif (
+                    result.status
+                    == DocumentStatus.FAILED
+                ):
                     self.progress.failed += 1
+
                 else:
                     self.progress.skipped += 1
 
-            # Save checkpoint
             self._save_checkpoint()
 
-            # Report progress
             if progress_callback:
-                progress_callback(self.progress)
+                progress_callback(
+                    self.progress
+                )
 
             self.logger.info(
-                f"Progress: {self.progress.processed}/{self.progress.total_documents} "
-                f"({self.progress.completion_percentage:.1f}%) - "
-                f"{self.progress.documents_per_second:.2f} docs/sec"
+                f"{self.progress.processed}/"
+                f"{self.progress.total_documents} "
+                f"({self.progress.completion_percentage:.2f}%)"
             )
 
         return self.results
 
-    async def _process_batch(self, documents: List[Path]) -> List[ProcessingResult]:
-        """
-        Process a batch of documents in parallel.
+    async def _process_batch(
+        self,
+        documents: List[Path]
+    ) -> List[ProcessingResult]:
 
-        Args:
-            documents: List of document paths
-
-        Returns:
-            List of processing results
-        """
         results = []
 
-        # Use ProcessPoolExecutor for CPU-bound extraction
-        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all documents for processing
-            future_to_doc = {
-                executor.submit(self._process_single_document, doc): doc
-                for doc in documents
+        with ThreadPoolExecutor(
+            max_workers=self.max_workers
+        ) as executor:
+
+            futures = {
+                executor.submit(
+                    self._process_single_document,
+                    document
+                ): document
+                for document in documents
             }
 
-            # Collect results as they complete
-            for future in as_completed(future_to_doc):
-                doc = future_to_doc[future]
+            for future in as_completed(futures):
+
+                document = futures[future]
+
                 try:
+
                     result = future.result()
+
                     results.append(result)
-                except Exception as e:
-                    self.logger.error(f"Failed to process {doc}: {e}")
-                    results.append(ProcessingResult(
-                        file_path=str(doc),
-                        status=DocumentStatus.FAILED,
-                        error_message=str(e)
-                    ))
+
+                except Exception as exc:
+
+                    self.logger.exception(
+                        f"Failed processing "
+                        f"{document}"
+                    )
+
+                    results.append(
+                        ProcessingResult(
+                            file_path=str(document),
+                            status=DocumentStatus.FAILED,
+                            error_message=str(exc)
+                        )
+                    )
 
         return results
 
-    def _process_single_document(self, file_path: Path) -> ProcessingResult:
-        """
-        Process a single document through the full pipeline.
+    def _retry(
+        self,
+        function,
+        retries: int = 3,
+        delay: int = 2
+    ):
 
-        Args:
-            file_path: Path to the document
+        last_error = None
 
-        Returns:
-            ProcessingResult with status and metrics
-        """
-        import time
+        for attempt in range(retries):
+
+            try:
+                return function()
+
+            except Exception as exc:
+
+                last_error = exc
+
+    ry {attempt + 1}/{retries}: "
+                    f"{exc}"
+                )
+
+                time.sleep(delay)
+
+        raise last_error
+
+    def _process_single_document(
+        self,
+        file_path: Path
+    ) -> ProcessingResult:
+
         start_time = time.time()
 
         try:
-            # Get appropriate extractor
-            extractor = self.registry.get_extractor(file_path)
 
-            if not extractor:
-                return ProcessingResult(
-                    file_path=str(file_path),
-                    status=DocumentStatus.SKIPPED,
-                    error_message="No extractor available for this file type"
-                )
-
-            # Extract content
-            document = extractor.extract(file_path)
-
-            if not document.content.strip():
-                return ProcessingResult(
-                    file_path=str(file_path),
-                    status=DocumentStatus.SKIPPED,
-                    error_message="Document has no extractable content"
-                )
-
-            # Chunk the content
-            chunks = self.chunker.chunk(
-                document.content,
-                metadata={
-                    'source': str(file_path),
-                    'title': document.metadata.get('title', ''),
-                    'file_type': document.file_type
-                }
+            extractor = self.registry.get_extractor(
+                file_path
             )
 
-            # Generate embeddings and store
-            for chunk in chunks:
-                embedding = self.embed(chunk.text)
+            if not extractor:
 
-                self.vector_store.add(
-                    id=f"{file_path}_{chunk.chunk_index}",
-                    embedding=embedding,
-                    text=chunk.text,
-                    metadata=chunk.metadata
+                return ProcessingResult(
+                    file_path=str(file_path),
+                    status=DocumentStatus.SKIPPED,
+                    error_message="No extractor found"
                 )
 
-            processing_time = (time.time() - start_time) * 1000
+            document = self._retry(
+                lambda: extractor.extract(
+                    file_path
+                )
+            )
+
+            if not document.content.strip():
+
+                return ProcessingResult(
+                    file_path=str(file_path),
+                    status=DocumentStatus.SKIPPED,
+                    error_message="Empty content"
+                )
+
+            metadata = {
+                "source": str(file_path),
+                "title": document.metadata.get(
+                    "title",
+                    file_path.stem
+                ),
+                "file_type": document.file_type
+            }
+
+            if self.metadata_extractor:
+
+                enriched = (
+                    self.metadata_extractor.extract(
+                        content=document.content,
+                        file_path=file_path,
+                        document_metadata=document.metadata
+                    )
+                )
+
+                metadata.update(
+                    enriched.to_dict()
+                )
+
+            chunks = self.chunker.chunk(
+                document.content,
+                metadata=metadata
+            )
+
+            if not chunks:
+
+                return ProcessingResult(
+                    file_path=str(file_path),
+                    status=DocumentStatus.SKIPPED,
+                    error_message="No chunks created"
+                )
+
+            texts = [
+                chunk.text
+                for chunk in chunks
+            ]
+
+            embeddings = self.embed(
+                texts
+            )
+
+            ids = [
+                chunk.chunk_id
+                for chunk in chunks
+            ]
+
+            metadatas = [
+                chunk.metadata
+                for chunk in chunks
+            ]
+
+            self.vector_store.add_batch(
+                ids=ids,
+                embeddings=embeddings,
+                texts=texts,
+                metadatas=metadatas
+            )
+
+            elapsed_ms = (
+                time.time() - start_time
+            ) * 1000
 
             return ProcessingResult(
                 file_path=str(file_path),
                 status=DocumentStatus.COMPLETED,
                 chunks_created=len(chunks),
-                processing_time_ms=processing_time,
-                metadata=document.metadata
+                processing_time_ms=elapsed_ms,
+                metadata={
+                    **document.metadata,
+                    "embeddings_created": len(
+                        embeddings
+                    )
+                }
             )
 
-        except Exception as e:
-            self.logger.exception(f"Error processing {file_path}")
+        except Exception as exc:
+
+            self.logger.exception(
+                f"Error processing "
+                f"{file_path}"
+            )
+
             return ProcessingResult(
                 file_path=str(file_path),
                 status=DocumentStatus.FAILED,
-                error_message=str(e),
-                processing_time_ms=(time.time() - start_time) * 1000
+                error_message=str(exc),
+                processing_time_ms=(
+                    time.time()
+                    - start_time
+                ) * 1000
             )
 
     def _discover_documents(
         self,
         directory: Path,
         recursive: bool,
-        file_patterns: List[str]
-    ) -> List[Path]:
-        """
-        Discover all documents in a directory.
+        file_patterns: Optional[List[str]]
+    ) -> Listpatterns = file_patterns or [
+            "*.pdf",
+            "*.docx",
+            "*.doc",
+            "*.txt",
+            "*.md",
+            "*.html"
+        ]
 
-        Args:
-            directory: Root directory
-            recursive: Search subdirectories
-            file_patterns: Glob patterns to match
-
-        Returns:
-            List of document paths
-        """
-        patterns = file_patterns or ['*.pdf', '*.docx', '*.doc', '*.txt', '*.md', '*.html']
         documents = []
 
         for pattern in patterns:
-            if recursive:
-                documents.extend(directory.rglob(pattern))
-            else:
-                documents.extend(directory.glob(pattern))
 
-        return sorted(set(documents))
+            if recursive:
+                documents.extend(
+                    directory.rglob(pattern)
+                )
+            else:
+                documents.extend(
+                    directory.glob(pattern)
+                )
+
+        return sorted(
+            set(documents)
+        )
 
     def _load_checkpoint(self) -> set:
-        """
-        Load checkpoint of already processed files.
 
-        Returns:
-            Set of processed file paths
-        """
         if not self.checkpoint_dir:
             return set()
 
-        checkpoint_file = self.checkpoint_dir / "processed_files.json"
+        checkpoint_file = (
+            self.checkpoint_dir
+            / "processed_files.json"
+        )
 
-        if checkpoint_file.exists():
-            with open(checkpoint_file, 'r') as f:
-                return set(json.load(f))
+        if not checkpoint_file.exists():
+            return set()
 
-        return set()
+        try:
+
+            with open(
+                checkpoint_file,
+                "r",
+                encoding="utf-8"
+            ) as file:
+
+                data = json.load(file)
+
+                return set(
+                    data.get(
+                        "completed",
+                        []
+                    )
+                )
+
+        except Exception:
+
+            return set()
 
     def _save_checkpoint(self) -> None:
-        """Save checkpoint of processed files."""
+
         if not self.checkpoint_dir:
             return
 
-        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        checkpoint_file = self.checkpoint_dir / "processed_files.json"
+        self.checkpoint_dir.mkdir(
+            parents=True,
+            exist_ok=True
+        )
 
-        processed = [r.file_path for r in self.results if r.status == DocumentStatus.COMPLETED]
+        checkpoint_file = (
+            self.checkpoint_dir
+            / "processed_files.json"
+        )
 
-        with open(checkpoint_file, 'w') as f:
-            json.dump(processed, f)
+        completed = [
+            result.file_path
+            for result in self.results
+            if result.status
+            == DocumentStatus.COMPLETED
+        ]
+
+        failed = [
+            result.file_path
+            for result in self.results
+            if result.status
+            == DocumentStatus.FAILED
+        ]
+
+        payload = {
+            "completed": completed,
+            "failed": failed,
+            "last_updated": (
+                datetime.utcnow()
+                .isoformat()
+            )
+        }
+
+        with open(
+            checkpoint_file,
+            "w",
+            encoding="utf-8"
+        ) as file:
+
+            json.dump(
+                payload,
+                file,
+                indent=2
+            )
+
+    def summary(self) -> Dict[str, Any]:
+
+        if not self.progress:
+
+            return {}
+
+        return {
+            "total": self.progress.total_documents,
+            "processed": self.progress.processed,
+            "successful": self.progress.successful,
+            "failed": self.progress.failed,
+            "skipped": self.progress.skipped,
+            "elapsed_seconds": round(
+                self.progress.elapsed_seconds,
+                2
+            ),
+            "documents_per_second": round(
+                self.progress.documents_per_second,
+                2
+            )
+        }

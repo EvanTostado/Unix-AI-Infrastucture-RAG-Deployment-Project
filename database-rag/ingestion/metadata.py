@@ -1,195 +1,243 @@
-# src/processors/metadata.py
-"""
-Metadata extraction and enrichment for documents.
-Extracts both explicit metadata and inferred properties.
-"""
+import os
+import json
+import psycopg2
 
-from dataclasses import dataclass
-from typing import Dict, Any, List, Optional
-from datetime import datetime
-import hashlib
-import re
-from pathlib import Path
+from pgvector.psycopg2 import register_vector
 
 
-@dataclass
-class EnrichedMetadata:
+class PgVectorStore(VectorStore):
     """
-    Contains all metadata for a document.
-    """
-    # Source information
-    source_path: str
-    file_name: str
-    file_extension: str
-    file_size_bytes: int
+    PostgreSQL + pgvector implementation.
 
-    # Content hashes for deduplication
-    content_hash: str
-
-    # Timestamps
-    created_at: Optional[datetime]
-    modified_at: Optional[datetime]
-    ingested_at: datetime
-
-    # Document properties
-    title: str
-    author: str
-    language: str
-    word_count: int
-    char_count: int
-
-    # Extracted entities
-    topics: List[str]
-    entities: Dict[str, List[str]]
-
-    # Custom metadata
-    custom: Dict[str, Any]
-
-
-class MetadataExtractor:
-    """
-    Extracts and enriches document metadata.
-    Combines file-level, content-level, and inferred metadata.
+    Good for self-hosted RAG systems and Docker deployments.
     """
 
-    def __init__(self, detect_language: bool = True, extract_entities: bool = False):
+    def __init__(self):
         """
-        Initialize the metadata extractor.
-
-        Args:
-            detect_language: Whether to detect document language
-            extract_entities: Whether to extract named entities (requires spaCy)
+        Initialize PostgreSQL connection.
         """
-        self.detect_language = detect_language
-        self.extract_entities = extract_entities
 
-        if detect_language:
-            try:
-                from langdetect import detect
-                self.lang_detect = detect
-            except ImportError:
-                self.detect_language = False
-
-        if extract_entities:
-            try:
-                import spacy
-                self.nlp = spacy.load("en_core_web_sm")
-            except (ImportError, OSError):
-                self.extract_entities = False
-
-    def extract(
-        self,
-        content: str,
-        file_path: Path,
-        document_metadata: Dict[str, Any] = None
-    ) -> EnrichedMetadata:
-        """
-        Extract comprehensive metadata from a document.
-
-        Args:
-            content: The document text content
-            file_path: Path to the source file
-            document_metadata: Metadata extracted during content extraction
-
-        Returns:
-            EnrichedMetadata object
-        """
-        document_metadata = document_metadata or {}
-
-        # File-level metadata
-        stat = file_path.stat()
-
-        # Content hash for deduplication
-        content_hash = hashlib.sha256(content.encode()).hexdigest()
-
-        # Language detection
-        language = "unknown"
-        if self.detect_language and content:
-            try:
-                language = self.lang_detect(content[:1000])
-            except Exception:
-                pass
-
-        # Entity extraction
-        entities = {}
-        if self.extract_entities and content:
-            entities = self._extract_entities(content)
-
-        # Topic extraction (simple keyword-based)
-        topics = self._extract_topics(content)
-
-        return EnrichedMetadata(
-            source_path=str(file_path),
-            file_name=file_path.name,
-            file_extension=file_path.suffix.lower(),
-            file_size_bytes=stat.st_size,
-            content_hash=content_hash,
-            created_at=datetime.fromtimestamp(stat.st_ctime),
-            modified_at=datetime.fromtimestamp(stat.st_mtime),
-            ingested_at=datetime.now(),
-            title=document_metadata.get('title', file_path.stem),
-            author=document_metadata.get('author', ''),
-            language=language,
-            word_count=len(content.split()),
-            char_count=len(content),
-            topics=topics,
-            entities=entities,
-            custom=document_metadata
+        self.conn = psycopg2.connect(
+            host=os.getenv("DB_HOST", "db"),
+            port=os.getenv("DB_PORT", "5432"),
+            dbname=os.getenv("DB_NAME", "ragdb"),
+            user=os.getenv("DB_USER", "postgres"),
+            password=os.getenv("DB_PASSWORD")
         )
 
-    def _extract_entities(self, content: str) -> Dict[str, List[str]]:
+        register_vector(self.conn)
+
+        self.cursor = self.conn.cursor()
+
+    def add(
+        self,
+        id: str,
+        embedding: List[float],
+        text: str,
+        metadata: Dict[str, Any] = None
+    ) -> None:
         """
-        Extract named entities using spaCy.
-
-        Args:
-            content: Document text
-
-        Returns:
-            Dictionary mapping entity types to lists of entities
+        Add a single document embedding.
         """
-        # Process only first 100K chars to avoid memory issues
-        doc = self.nlp(content[:100000])
 
-        entities = {}
-        for ent in doc.ents:
-            if ent.label_ not in entities:
-                entities[ent.label_] = []
-            if ent.text not in entities[ent.label_]:
-                entities[ent.label_].append(ent.text)
+        metadata = metadata or {}
 
-        return entities
+        self.cursor.execute(
+            """
+            INSERT INTO embeddings
+            (
+                id,
+                text,
+                metadata,
+                embedding
+            )
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (id)
+            DO UPDATE SET
+                text = EXCLUDED.text,
+                metadata = EXCLUDED.metadata,
+                embedding = EXCLUDED.embedding
+            """,
+            (
+                id,
+                text,
+                json.dumps(metadata),
+                embedding
+            )
+        )
 
-    def _extract_topics(self, content: str, max_topics: int = 10) -> List[str]:
+        self.conn.commit()
+
+    def add_batch(
+        self,
+        ids: List[str],
+        embeddings: List[List[float]],
+        texts: List[str],
+        metadatas: List[Dict[str, Any]] = None
+    ) -> None:
         """
-        Extract topic keywords from content.
-        Uses simple TF-based extraction.
-
-        Args:
-            content: Document text
-            max_topics: Maximum number of topics to return
-
-        Returns:
-            List of topic keywords
+        Batch insert documents.
         """
-        # Simple word frequency analysis
-        words = re.findall(r'\b[a-zA-Z]{4,}\b', content.lower())
 
-        # Filter common words
-        stopwords = {
-            'that', 'this', 'with', 'from', 'have', 'been', 'were', 'they',
-            'their', 'which', 'would', 'could', 'should', 'about', 'there',
-            'when', 'what', 'where', 'will', 'more', 'some', 'than', 'into',
-            'only', 'other', 'also', 'just', 'your', 'like', 'make', 'made'
-        }
+        metadatas = metadatas or [{} for _ in ids]
 
-        filtered_words = [w for w in words if w not in stopwords]
+        rows = []
 
-        # Count frequencies
-        freq = {}
-        for word in filtered_words:
-            freq[word] = freq.get(word, 0) + 1
+        for doc_id, embedding, text, metadata in zip(
+            ids,
+            embeddings,
+            texts,
+            metadatas
+        ):
+            rows.append(
+                (
+                    doc_id,
+                    text,
+                    json.dumps(metadata),
+                    embedding
+                )
+            )
 
-        # Sort by frequency and return top topics
-        sorted_words = sorted(freq.items(), key=lambda x: x[1], reverse=True)
+        self.cursor.executemany(
+            """
+            INSERT INTO embeddings
+            (
+                id,
+                text,
+                metadata,
+                embedding
+            )
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (id)
+            DO UPDATE SET
+                text = EXCLUDED.text,
+                metadata = EXCLUDED.metadata,
+                embedding = EXCLUDED.embedding
+            """,
+            rows
+        )
 
-        return [word for word, count in sorted_words[:max_topics]]
+        self.conn.commit()
+
+    def search(
+        self,
+        query_embedding: List[float],
+        top_k: int = 10,
+        filter: Dict[str, Any] = None
+    ) -> List"""
+        Search using cosine similarity.
+        """
+
+        if filter:
+            where_conditions = []
+            values = [query_embedding]
+
+            for key, value in filter.items():
+                where_conditions.append(
+                    f"metadata->>'{key}' = %s"
+                )
+                values.append(str(value))
+
+            values.append(top_k)
+
+            sql = f"""
+                SELECT
+                    id,
+                    text,
+                    metadata,
+                    embedding <=> %s AS distance
+                FROM embeddings
+                WHERE {' AND '.join(where_conditions)}
+                ORDER BY distance ASC
+                LIMIT %s
+            """
+
+            self.cursor.execute(sql, values)
+
+        else:
+            self.cursor.execute(
+                """
+                SELECT
+                    id,
+                    text,
+                    metadata,
+                    embedding <=> %s AS distance
+                FROM embeddings
+                ORDER BY distance ASC
+                LIMIT %s
+                """,
+                (
+                    query_embedding,
+                    top_k
+                )
+            )
+
+        rows = self.cursor.fetchall()
+
+        results = []
+
+        for row in rows:
+
+            similarity = max(
+                0.0,
+                1.0 - float(row[3])
+            )
+
+            results.append(
+                SearchResult(
+                    id=row[0],
+                    text=row[1],
+                    score=similarity,
+                    metadata=row[2] or {}
+                )
+            )
+
+        return results
+
+    def delete(
+        self,
+        ids: List[str]
+    ) -> None:
+        """
+        Delete vectors by ID.
+        """
+
+        self.cursor.execute(
+            """
+            DELETE FROM embeddings
+            WHERE id = ANY(%s)
+            """,
+            (ids,)
+        )
+
+        self.conn.commit()
+
+    def count(self) -> int:
+        """
+        Return document count.
+        """
+
+        self.cursor.execute(
+            "SELECT COUNT(*) FROM embeddings"
+        )
+
+        return self.cursor.fetchone()[0]
+
+    def clear(self) -> None:
+        """
+        Delete all vectors.
+        """
+
+        self.cursor.execute(
+            "TRUNCATE TABLE embeddings"
+        )
+
+        self.conn.commit()
+
+    def close(self) -> None:
+        """
+        Close database connection.
+        """
+
+        self.cursor.close()
+        self.conn.close()

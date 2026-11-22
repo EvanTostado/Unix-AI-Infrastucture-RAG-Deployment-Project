@@ -1,129 +1,230 @@
-# main.py
 """
-Complete document ingestion pipeline example.
-Demonstrates the full flow from raw documents to vector store.
+Main entry point for document ingestion.
+
+Pipeline:
+
+PDF Documents
+    ↓
+PDF Extraction
+    ↓
+Metadata Enrichment
+    ↓
+Chunking
+    ↓
+Embeddings
+    ↓
+PostgreSQL + pgvector
 """
 
 import asyncio
-from pathlib import Path
+import logging
 import os
 
-# Import pipeline components
-from src.extractors.base import ExtractorRegistry, FileTypeDetector
-from src.extractors.pdf_extractor import PDFExtractor
-from src.extractors.docx_extractor import DocxExtractor
-from src.extractors.html_extractor import HTMLExtractor, MarkdownExtractor
-from src.processors.chunker import RecursiveCharacterChunker
-from src.processors.metadata import MetadataExtractor
-from src.pipeline.batch import BatchProcessor, BatchProgress
-from src.storage.vector_store import ChromaDBStore
+from pathlib import Path
+
+from sentence_transformers import SentenceTransformer
+
+from ingestion.extractor import PDFExtractor
+from ingestion.chunker import RecursiveCharacterChunker
+from ingestion.metadata import MetadataExtractor
+from ingestion.batch import BatchProcessor, BatchProgress
+from ingestion.vector_store import PgVectorStore
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+logger = logging.getLogger(__name__)
+
+
+class SimpleRegistry:
+    """
+    Minimal extractor registry since the original
+    ExtractorRegistry class does not exist.
+    """
+
+    def __init__(self):
+        self.extractor = PDFExtractor(
+            enable_ocr=False
+        )
+
+    def get_extractor(self, file_path):
+
+        suffix = Path(file_path).suffix.lower()
+
+        if suffix == ".pdf":
+            return self.extractor
+
+        return None
 
 
 def create_embedding_function():
     """
-    Create an embedding function using OpenAI or local model.
-    Returns a function that converts text to embeddings.
+    Create batched embedding function.
     """
-    # Option 1: OpenAI embeddings
-    if os.getenv('OPENAI_API_KEY'):
-        from openai import OpenAI
-        client = OpenAI()
 
-        def embed(text: str) -> list:
-            response = client.embeddings.create(
-                model="text-embedding-3-small",
-                input=text
-            )
-            return response.data[0].embedding
+    model = SentenceTransformer(
+        "sentence-transformers/all-MiniLM-L6-v2"
+    )
 
-        return embed
+    def embed(texts):
 
-    # Option 2: Local embeddings with sentence-transformers
-    else:
-        from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer('all-MiniLM-L6-v2')
+        embeddings = model.encode(
+            texts,
+            batch_size=32,
+            show_progress_bar=False,
+            convert_to_numpy=True
+        )
 
-        def embed(text: str) -> list:
-            return model.encode(text).tolist()
+        return embeddings.tolist()
 
-        return embed
+    return embed
 
 
 async def main():
-    """
-    Main entry point for document ingestion.
-    """
-    # Configuration
-    DOCUMENTS_DIR = Path("./documents")
-    VECTOR_DB_DIR = Path("./vector_db")
-    CHECKPOINT_DIR = Path("./checkpoints")
 
-    # Initialize extractor registry
-    registry = ExtractorRegistry()
-    registry.register(PDFExtractor(enable_ocr=True))
-    registry.register(DocxExtractor())
-    registry.register(HTMLExtractor())
-    registry.register(MarkdownExtractor())
+    documents_dir = Path(
+        os.getenv(
+            "DOCUMENTS_DIR",
+            "./documents"
+        )
+    )
 
-    # Initialize chunker with sensible defaults
+    checkpoint_dir = Path(
+        os.getenv(
+            "CHECKPOINT_DIR",
+            "./checkpoints"
+        )
+    )
+
+    logger.info(
+        f"Document directory: {documents_dir}"
+    )
+
+    logger.info(
+        "Initializing extractor..."
+    )
+
+    registry = SimpleRegistry()
+
+    logger.info(
+        "Initializing metadata extractor..."
+    )
+
+    metadata_extractor = MetadataExtractor(
+        detect_language=True,
+        extract_entities=False
+    )
+
+    logger.info(
+        "Initializing chunker..."
+    )
+
     chunker = RecursiveCharacterChunker(
-        chunk_size=1000,      # ~200-250 words per chunk
-        chunk_overlap=200     # 20% overlap for context
+        chunk_size=750,
+        chunk_overlap=200
     )
 
-    # Initialize embedding function
-    embed = create_embedding_function()
-
-    # Initialize vector store
-    vector_store = ChromaDBStore(
-        collection_name="documents",
-        persist_directory=str(VECTOR_DB_DIR)
+    logger.info(
+        "Initializing embeddings..."
     )
 
-    # Initialize batch processor
+    embed_function = create_embedding_function()
+
+    logger.info(
+        "Connecting to PostgreSQL..."
+    )
+
+    vector_store = PgVectorStore()
+
     processor = BatchProcessor(
         extractor_registry=registry,
         chunker=chunker,
-        embedding_function=embed,
+        embedding_function=embed_function,
         vector_store=vector_store,
-        max_workers=4,
-        batch_size=50,
-        checkpoint_dir=CHECKPOINT_DIR
+        metadata_extractor=metadata_extractor,
+        max_workers=2,
+        batch_size=8,
+        checkpoint_dir=checkpoint_dir
     )
 
-    # Progress callback
-    def on_progress(progress: BatchProgress):
+    def on_progress(
+        progress: BatchProgress
+    ):
+
         print(
-            f"\rProgress: {progress.processed}/{progress.total_documents} "
-            f"({progress.completion_percentage:.1f}%) | "
-            f"Success: {progress.successful} | "
-            f"Failed: {progress.failed} | "
-            f"Speed: {progress.documents_per_second:.2f} docs/sec",
+            f"\r"
+            f"{progress.processed}/"
+            f"{progress.total_documents} "
+            f"({progress.completion_percentage:.1f}%) "
+            f"| Success: {progress.successful} "
+            f"| Failed: {progress.failed} "
+            f"| Speed: "
+            f"{progress.documents_per_second:.2f}/s",
             end=""
         )
 
-    # Run the pipeline
-    print(f"Starting ingestion from {DOCUMENTS_DIR}")
+    logger.info(
+        "Starting ingestion..."
+    )
 
     results = await processor.process_directory(
-        directory=DOCUMENTS_DIR,
+        directory=documents_dir,
         recursive=True,
-        file_patterns=['*.pdf', '*.docx', '*.md', '*.html', '*.txt'],
+        file_patterns=["*.pdf"],
         progress_callback=on_progress
     )
 
-    print("\n\nIngestion complete!")
-    print(f"Total documents: {len(results)}")
-    print(f"Successful: {sum(1 for r in results if r.status.value == 'completed')}")
-    print(f"Failed: {sum(1 for r in results if r.status.value == 'failed')}")
-    print(f"Skipped: {sum(1 for r in results if r.status.value == 'skipped')}")
+    print("\n")
+    print("=" * 60)
+    print("INGESTION COMPLETE")
+    print("=" * 60)
 
-    # Print any errors
-    errors = [r for r in results if r.error_message]
-    if errors:
-        print("\nErrors:")
-        for r in errors[:10]:  # Show first 10 errors
-            print(f"  {r.file_path}: {r.error_message}")
+    summary = processor.summary()
+
+    print(
+        f"Processed: {summary['processed']}"
+    )
+
+    print(
+        f"Successful: {summary['successful']}"
+    )
+
+    print(
+        f"Failed: {summary['failed']}"
+    )
+
+    print(
+        f"Skipped: {summary['skipped']}"
+    )
+
+    failures = [
+        r
+        for r in results
+        if r.status.value == "failed"
+    ]
+
+    if failures:
+
+        print("\nFailures:")
+
+        for failure in failures:
+
+            print(
+                f"{failure.file_path}"
+            )
+
+            print(
+                f"  {failure.error_message}"
+            )
+
+    vector_store.close()
+
+    logger.info(
+        "Shutdown complete."
+    )
 
 
 if __name__ == "__main__":
