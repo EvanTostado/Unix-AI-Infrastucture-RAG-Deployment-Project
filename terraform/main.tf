@@ -21,7 +21,7 @@ resource "google_compute_network" "main_vpc" { #tell terraform to manage resourc
 }
 #creating the subnet
 resource "google_compute_subnetwork" "main_subnet" {
-  name          = "linux-ai-subnet"
+  name          = var.vm_name
   ip_cidr_range = "10.10.0.0/24" #network address cidr /24 first 24 bits identify network
   region        = "us-east1"
   network       = google_compute_network.main_vpc.id #links subnet to my VPC resourcetype.resourcename.attribute
