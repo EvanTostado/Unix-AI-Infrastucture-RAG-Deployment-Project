@@ -59,3 +59,6 @@ services:
 networks:
   rag-network:
     driver: bridge
+  
+  app_backend_net:
+    external: true

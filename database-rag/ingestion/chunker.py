@@ -1,167 +1,90 @@
-"""
-Text chunking strategies for RAG document processing.
-Different strategies optimize for different retrieval patterns.
-"""
-
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import List, Dict, Any
 import hashlib
-import re
 
 
 @dataclass
 class Chunk:
-    """
-    Represents a single chunk of text with metadata.
-    """
-
     text: str
     chunk_index: int
     start_char: int
     end_char: int
     metadata: Dict[str, Any]
-
-    # Deterministic ID for idempotent ingestion
     chunk_id: str = ""
 
-    @property
-    def length(self) -> int:
-        return len(self.text)
 
-
-class BaseChunker(ABC):
-    """
-    Abstract base chunker.
-    """
-
-    @abstractmethod
-    def chunk(
-        self,
-        text: str,
-        metadata: Dict[str, Any] = None
-    ) -> List[Chunk]:
-        pass
-
-
-class RecursiveCharacterChunker(BaseChunker):
-    """
-    Recursive character-based chunking.
-    """
+class RecursiveCharacterChunker:
 
     def __init__(
         self,
-        chunk_size: int = 1000,
-        chunk_overlap: int = 200,
-        separators: List[str] = None
+        chunk_size=1000,
+        chunk_overlap=200,
+        separators=None
     ):
-
-        if chunk_size <= 0:
-            raise ValueError(
-                "chunk_size must be greater than 0"
-            )
-
-        if chunk_overlap < 0:
-            raise ValueError(
-                "chunk_overlap cannot be negative"
-            )
-
-        if chunk_overlap >= chunk_size:
-            raise ValueError(
-                "chunk_overlap must be less than chunk_size"
-            )
-
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
         self.separators = separators or [
-            "\n\n",
-            "\n",
-            ". ",
-            "? ",
-            "! ",
-            "; ",
-            ", ",
-            " ",
-            ""
+            "\n\n", "\n", ". ", "? ",
+            "! ", "; ", ", ", " ", ""
         ]
 
-    def chunk(
-        self,
-        text: str,
-        metadata: Dict[str, Any] = None
-    ) -> List[Chunk]:
+    def chunk(self, text, metadata=None):
 
-        if not text or not text.strip():
+        if not text.strip():
             return []
 
         metadata = metadata or {}
-
-        chunks = []
 
         splits = self._split_text(
             text,
             self.separators
         )
 
-        current_chunk = []
-        current_length = 0
+        chunks = []
+        current = []
+        length = 0
+        start = 0
+        pos = 0
 
-        current_start = 0
-        char_position = 0
-
-        for split in splits:
-
-            split_length = len(split)
+        for part in splits:
 
             if (
-                current_length + split_length > self.chunk_size
-                and current_chunk
+                length + len(part) > self.chunk_size
+                and current
             ):
-
-                chunk_text = "".join(current_chunk)
+                chunk_text = "".join(current)
 
                 chunks.append(
                     self._build_chunk(
                         chunk_text,
                         len(chunks),
-                        current_start,
-                        metadata,
-                        "recursive"
+                        start,
+                        metadata
                     )
                 )
 
-                overlap_text = self._get_overlap(
-                    current_chunk
-                )
+                overlap = self._get_overlap(current)
 
-                current_chunk = (
-                    [overlap_text]
-                    if overlap_text
-                    else []
-                )
+                current = [overlap] if overlap else []
 
-                current_length = len(overlap_text)
+                length = len(overlap)
 
-                current_start = (
-                    char_position - current_length
-                )
+                start = pos - length
 
-            current_chunk.append(split)
-            current_length += split_length
-            char_position += split_length
+            current.append(part)
 
-        if current_chunk:
+            length += len(part)
 
-            chunk_text = "".join(current_chunk)
+            pos += len(part)
 
+        if current:
             chunks.append(
                 self._build_chunk(
-                    chunk_text,
+                    "".join(current),
                     len(chunks),
-                    current_start,
-                    metadata,
-                    "recursive"
+                    start,
+                    metadata
                 )
             )
 
@@ -169,89 +92,70 @@ class RecursiveCharacterChunker(BaseChunker):
 
     def _build_chunk(
         self,
-        chunk_text: str,
-        index: int,
-        start_char: int,
-        metadata: Dict[str, Any],
-        chunk_type: str
-    ) -> Chunk:
+        text,
+        index,
+        start,
+        metadata
+    ):
 
         chunk_id = hashlib.sha256(
             (
                 metadata.get("source", "")
                 + str(index)
-                + chunk_text
-            ).encode("utf-8")
+                + text
+            ).encode()
         ).hexdigest()
 
         return Chunk(
-            text=chunk_text,
+            text=text,
             chunk_index=index,
-            start_char=start_char,
-            end_char=start_char + len(chunk_text),
-            metadata={
-                **metadata,
-                "chunk_hash": chunk_id,
-                "chunk_size": len(chunk_text),
-                "chunk_type": chunk_type,
-                "chunk_index": index
-            },
+            start_char=start,
+            end_char=start + len(text),
+            metadata=metadata,
             chunk_id=chunk_id
         )
 
-    def _split_text(
-        self,
-        text: str,
-        separators: List[str]
-    ) -> List[str]:
+    def _split_text(self, text, separators):
 
         if not separators:
             return [text]
 
-        separator = separators[0]
-        remaining = separators[1:]
+        sep = separators[0]
 
-        if separator == "":
+        if sep == "":
             return list(text)
 
-        splits = text.split(separator)
+        parts = text.split(sep)
 
-        result = []
+        result = [
+            p + sep if i < len(parts) - 1 else p
+            for i, p in enumerate(parts)
+        ]
 
-        for i, split in enumerate(splits):
+        final = []
 
-            if i < len(splits) - 1:
-                result.append(split + separator)
-            else:
-                result.append(split)
-
-        final_splits = []
-
-        for split in result:
-
+        for part in result:
             if (
-                len(split) > self.chunk_size
-                and remaining
+                len(part) > self.chunk_size
+                and len(separators) > 1
             ):
-                final_splits.extend(
+                final.extend(
                     self._split_text(
-                        split,
-                        remaining
+                        part,
+                        separators[1:]
                     )
                 )
             else:
-                final_splits.append(split)
+                final.append(part)
 
-        return final_splits
+        return final
 
-    def _get_overlap(
-        self,
-        chunks: List[str]
-    ) -> str:
+    def _get_overlap(self, chunks):
 
-        full_text = "".join(chunks)
+        text = "".join(chunks)
 
-        if len(full_text) <= self.chunk_overlap:
-            return full_text
-
-        return full_text[-self.chunk_overlap:]
+        return (
+            text
+            if len(text) <= self.chunk_overlap
+            else text[-self.chunk_overlap:]
+        )

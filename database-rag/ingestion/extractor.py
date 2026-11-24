@@ -1,17 +1,10 @@
-"""
-PDF document extractor with support for both text-based and scanned PDFs.
-Uses PyMuPDF for text extraction and optional OCR for images.
-"""
-
 import os
 import re
+import fitz
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Dict, Any
 
-import fitz
 from PyPDF2 import PdfMerger
 
 
@@ -26,255 +19,79 @@ class ExtractedDocument:
     word_count: int
 
 
-class BaseExtractor(ABC):
+class PDFExtractor:
 
-    @abstractmethod
-    def can_handle(self, mimetype: str) -> bool:
-        pass
-
-    @abstractmethod
-    def extract(self, file_path):
-        pass
-
-
-class PDFExtractor(BaseExtractor):
-    """
-    PDF extraction using PyMuPDF.
-    """
-
-    supported_mimetypes = [
-        "application/pdf"
-    ]
-
-    def __init__(
-        self,
-        enable_ocr: bool = False,
-        ocr_language: str = "eng"
-    ):
-
+    def __init__(self, enable_ocr=False, ocr_language="eng"):
         self.enable_ocr = enable_ocr
         self.ocr_language = ocr_language
 
         if enable_ocr:
-            try:
-                import pytesseract
-                from PIL import Image
+            import pytesseract
+            from PIL import Image
 
-                self.pytesseract = pytesseract
-                self.Image = Image
+            self.pytesseract = pytesseract
+            self.Image = Image
 
-            except ImportError:
-                raise ImportError(
-                    "OCR requires pytesseract and Pillow"
-                )
-
-    def merge_pdfs(
-        self,
-        pdf1_path: str,
-        pdf2_path: str,
-        output_path: str
-    ):
-
-        if not os.path.isfile(pdf1_path):
-            raise FileNotFoundError(pdf1_path)
-
-        if not os.path.isfile(pdf2_path):
-            raise FileNotFoundError(pdf2_path)
-
+    def merge_pdfs(self, pdf1, pdf2, output):
         merger = PdfMerger()
-
-        merger.append(pdf1_path)
-        merger.append(pdf2_path)
-
-        merger.write(output_path)
+        merger.append(pdf1)
+        merger.append(pdf2)
+        merger.write(output)
         merger.close()
+        return output
 
-        return output_path
-
-    def can_handle(
-        self,
-        mimetype: str
-    ) -> bool:
-
-        return (
-            mimetype in self.supported_mimetypes
-        )
-
-    def extract(
-        self,
-        file_path
-    ) -> ExtractedDocument:
+    def extract(self, file_path):
 
         doc = fitz.open(file_path)
 
-        metadata = self._extract_metadata(
-            doc
-        )
+        pages = []
 
-        pages_text = []
+        for page in doc:
+            text = page.get_text("text")
 
-        for page_num, page in enumerate(doc):
+            if self.enable_ocr and self._is_scanned(page, text):
+                text = self._ocr_page(page)
 
-            page_text = self._extract_page_text(
-                page,
-                page_num
-            )
+            pages.append(self._clean_text(text))
 
-            if page_text.strip():
-                pages_text.append(
-                    page_text
-                )
+        content = "\n\n".join(filter(None, pages))
 
-        content = "\n\n".join(
-            pages_text
-        )
-
-        word_count = len(
-            content.split()
-        )
-
-        doc.close()
-
-        return ExtractedDocument(
+        result = ExtractedDocument(
             content=content,
-            metadata=metadata,
+            metadata={
+                "title": doc.metadata.get("title", ""),
+                "author": doc.metadata.get("author", ""),
+                "page_count": doc.page_count
+            },
             source_path=str(file_path),
             file_type="application/pdf",
             extraction_method=(
-                "pymupdf"
-                + (
-                    "+ocr"
-                    if self.enable_ocr
-                    else ""
-                )
+                "pymupdf+ocr"
+                if self.enable_ocr
+                else "pymupdf"
             ),
-            page_count=len(pages_text),
-            word_count=word_count
+            page_count=doc.page_count,
+            word_count=len(content.split())
         )
 
-    def _extract_metadata(
-        self,
-        doc: fitz.Document
-    ) -> Dict[str, Any]:
+        doc.close()
+        return result
 
-        pdf_metadata = doc.metadata
-
-        return {
-            "title":
-                pdf_metadata.get(
-                    "title",
-                    ""
-                ),
-            "author":
-                pdf_metadata.get(
-                    "author",
-                    ""
-                ),
-            "subject":
-                pdf_metadata.get(
-                    "subject",
-                    ""
-                ),
-            "keywords":
-                pdf_metadata.get(
-                    "keywords",
-                    ""
-                ),
-            "creator":
-                pdf_metadata.get(
-                    "creator",
-                    ""
-                ),
-            "producer":
-                pdf_metadata.get(
-                    "producer",
-                    ""
-                ),
-            "creation_date":
-                pdf_metadata.get(
-                    "creationDate",
-                    ""
-                ),
-            "modification_date":
-                pdf_metadata.get(
-                    "modDate",
-                    ""
-                ),
-            "page_count":
-                doc.page_count
-        }
-
-    def _extract_page_text(
-        self,
-        page: fitz.Page,
-        page_num: int
-    ) -> str:
-
-        text = page.get_text(
-            "text"
+    def _is_scanned(self, page, text):
+        return (
+            len(text.strip()) < 50
+            and len(page.get_images()) > 0
         )
 
-        if (
-            self.enable_ocr
-            and self._is_likely_scanned(
-                page,
-                text
-            )
-        ):
-            text = self._ocr_page(
-                page
-            )
-
-        text = self._clean_text(
-            text
-        )
-
-        return text
-
-    def _is_likely_scanned(
-        self,
-        page: fitz.Page,
-        text: str
-    ) -> bool:
-
-        page_area = (
-            page.rect.width
-            * page.rect.height
-        )
-
-        text_length = len(
-            text.strip()
-        )
-
-        if (
-            text_length < 50
-            and page_area > 100000
-        ):
-            return (
-                len(
-                    page.get_images()
-                ) > 0
-            )
-
-        return False
-
-    def _ocr_page(
-        self,
-        page: fitz.Page
-    ) -> str:
-
-        mat = fitz.Matrix(
-            300 / 72,
-            300 / 72
-        )
+    def _ocr_page(self, page):
 
         pix = page.get_pixmap(
-            matrix=mat
+            matrix=fitz.Matrix(300 / 72, 300 / 72)
         )
 
         image = self.Image.frombytes(
             "RGB",
-            [pix.width, pix.height],
+            (pix.width, pix.height),
             pix.samples
         )
 
@@ -283,27 +100,16 @@ class PDFExtractor(BaseExtractor):
             lang=self.ocr_language
         )
 
-    def _clean_text(
-        self,
-        text: str
-    ) -> str:
+    def _clean_text(self, text):
 
-        text = re.sub(
-            r"\s+",
-            " ",
-            text
-        )
-
-        text = re.sub(
-            r"\x0c",
-            "\n\n",
-            text
-        )
+        text = re.sub(r"\s+", " ", text)
 
         text = re.sub(
             r"(\w)-\s+(\w)",
             r"\1\2",
             text
         )
+
+        text = text.replace("\x0c", "\n\n")
 
         return text.strip()

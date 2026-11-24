@@ -2,23 +2,36 @@ import os
 import json
 import psycopg2
 
+from typing import List, Dict, Any
+
 from pgvector.psycopg2 import register_vector
 
 
-class PgVectorStore(VectorStore):
+UPSERT_SQL = """
+INSERT INTO embeddings (
+    id,
+    text,
+    metadata,
+    embedding
+)
+VALUES (%s, %s, %s, %s)
+ON CONFLICT (id)
+DO UPDATE SET
+    text = EXCLUDED.text,
+    metadata = EXCLUDED.metadata,
+    embedding = EXCLUDED.embedding
+"""
+
+
+class PgVectorStore:
     """
     PostgreSQL + pgvector implementation.
-
-    Good for self-hosted RAG systems and Docker deployments.
     """
 
     def __init__(self):
-        """
-        Initialize PostgreSQL connection.
-        """
 
         self.conn = psycopg2.connect(
-            host=os.getenv("DB_HOST", "db"),
+            host=os.getenv("DB_HOST", "postgres"),
             port=os.getenv("DB_PORT", "5432"),
             dbname=os.getenv("DB_NAME", "ragdb"),
             user=os.getenv("DB_USER", "postgres"),
@@ -28,6 +41,15 @@ class PgVectorStore(VectorStore):
         register_vector(self.conn)
 
         self.cursor = self.conn.cursor()
+        
+    def close(self):
+
+        if self.cursor:
+            self.cursor.close()
+
+        if self.conn:
+            self.conn.close()
+            
 
     def add(
         self,
@@ -36,32 +58,13 @@ class PgVectorStore(VectorStore):
         text: str,
         metadata: Dict[str, Any] = None
     ) -> None:
-        """
-        Add a single document embedding.
-        """
-
-        metadata = metadata or {}
 
         self.cursor.execute(
-            """
-            INSERT INTO embeddings
+            UPSERT_SQL,
             (
                 id,
                 text,
-                metadata,
-                embedding
-            )
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (id)
-            DO UPDATE SET
-                text = EXCLUDED.text,
-                metadata = EXCLUDED.metadata,
-                embedding = EXCLUDED.embedding
-            """,
-            (
-                id,
-                text,
-                json.dumps(metadata),
+                json.dumps(metadata or {}),
                 embedding
             )
         )
@@ -75,28 +78,27 @@ class PgVectorStore(VectorStore):
         texts: List[str],
         metadatas: List[Dict[str, Any]] = None
     ) -> None:
-        """
-        Batch insert documents.
-        """
 
         metadatas = metadatas or [{} for _ in ids]
 
-        rows = []
-
-        for doc_id, embedding, text, metadata in zip(
-            ids,
-            embeddings,
-            texts,
-            metadatas
-        ):
-            rows.append(
-                (
-                    doc_id,
-                    text,
-                    json.dumps(metadata),
-                    embedding
-                )
+        rows = [
+            (
+                doc_id,
+                text,
+                json.dumps(metadata),
+                embedding
             )
+            for doc_id, embedding, text, metadata in zip(
+                ids,
+                embeddings,
+                texts,
+                metadatas
+            )
+        ]
 
         self.cursor.executemany(
-      
+            UPSERT_SQL,
+            rows
+        )
+
+        self.conn.commit()
