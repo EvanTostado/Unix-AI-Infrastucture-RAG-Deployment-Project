@@ -188,7 +188,7 @@ async def main():
         embedding_function=embed_function,
         vector_store=vector_store,
         metadata_extractor=metadata_extractor,
-        max_workers=2,
+        max_workers=1,
         batch_size=8,
         checkpoint_dir=checkpoint_dir
     )
