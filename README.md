@@ -43,7 +43,8 @@ It is important to notice the dataset includes information about third-party dat
 | Container orchestration | Docker Compose configuration for model initialization, two inference replicas, shared model storage, and an Nginx proxy. |
 | Request routing | Nginx least-connections balancing, request rate limiting, proxy timeouts, and upstream retry configuration. |
 | Python client | Helpers for generating embeddings and requesting answers using caller-supplied document chunks. Responses include source names and inference metrics, with rate-limit and request-failure handling. |
-| Retrieval and integration | Document ingestion, a vector store, retrieval logic, an application API, and frontend-to-backend connectivity are not implemented in this checkout. |
+| Application API | FastAPI `POST /api/ask` with strict request/response validation and explicit development mock mode. Live mode returns unavailable until retrieval and inference are connected. |
+| Retrieval and integration | Document ingestion, a vector store, retrieval logic, and frontend-to-backend connectivity are not implemented in this checkout. |
 | GCP deployment | Deployment target; cloud infrastructure and deployment automation are not included yet. |
 
 **The frontend currently runs in sample mode.** It makes no AI requests, performs no document retrieval, and never executes submitted code. Only the built-in example is supported; other inputs receive an unsupported-input message.
@@ -86,13 +87,18 @@ The web load balancer distributes browser traffic across the web replicas. The a
 5. Route inference through Nginx to an Ollama replica.
 6. Return an explanation and supporting sources to the frontend.
 
-The repository provides the inference configuration and client helpers for parts of this workflow. The indexing, retrieval, API, and UI integration remain future work.
+The repository provides the inference configuration, client helpers, and a validation/mock API for parts of this workflow. Indexing, retrieval, live API orchestration, and UI integration remain future work.
 
 ## Repository layout
 
 ```text
 .
 ├── README.md
+├── backend/
+│   ├── README.md                 # API setup, mock mode, and contract checks
+│   ├── app.py                    # POST /api/ask and envelope error handling
+│   ├── models.py                 # Validated request and response models
+│   └── tests/test_api.py         # Request and response contract checks
 ├── frontend/
 │   ├── README.md                 # Prototype behavior and preview instructions
 │   ├── index.html                # Troubleshooting form and explanation panel
@@ -117,6 +123,13 @@ python3 -m http.server 8000 --bind 127.0.0.1 --directory frontend
 Open `http://127.0.0.1:8000`, select **Load example**, then **Show sample explanation**. Stop the server with `Ctrl+C`.
 
 The frontend runs independently of Docker and Ollama. For the Visual Studio Code Live Preview alternative, see [the frontend README](frontend/README.md).
+
+## Run the API in development mock mode
+
+See [the backend README](backend/README.md) for setup, a sample request, configuration,
+and tests. Mock mode must be explicitly enabled with `API_MOCK_MODE=true` and
+returns a fixed example with a notice that no AI/retrieval ran. The frontend
+continues to run independently until the next integration step.
 
 ## Run the AI inference tier
 
@@ -155,4 +168,4 @@ See [the AI-tier setup notes](ai-tier/SETUP.md) for additional context.
 
 ## Path to a connected GCP deployment
 
-The next implementation steps are to align the AI prompt with Python troubleshooting, prepare the documentation corpus, add ingestion and vector retrieval, expose an application API, and connect the frontend to it. GCP hosting, networking, access controls, and deployment automation must also be defined before the project can be presented as a deployed end-to-end service.
+The next implementation steps follow [the API contract](docs/api-contract.md): connect the frontend through Nginx, align and validate structured Python generation, and add vector retrieval to the API. Documentation ingestion and GCP hosting, networking, access controls, and deployment automation must also be defined before the project can be presented as a deployed end-to-end service.
