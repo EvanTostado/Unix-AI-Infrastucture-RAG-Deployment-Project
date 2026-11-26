@@ -5,3 +5,10 @@ services:
     ports:
       - "127.0.0.1:8080:80"
     restart: unless-stopped
+  
+  backend:
+    build:
+      context: ./backend
+    environment:
+      API_MOCK_MODE: "true"
+    restart: unless-stopped
