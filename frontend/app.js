@@ -12,7 +12,7 @@ loadButton.addEventListener('click', () => {
   fields.forEach(field => { field.value = window.sampleResponses.example[field.id]; });
   validation.textContent = '';
   answer.replaceChildren();
-  status.textContent = 'Example loaded. Submit to see its prewritten explanation.';
+  status.textContent = 'Example loaded. Submit to request an explanation.';
   fields[0].focus();
 });
 
@@ -31,15 +31,22 @@ form.addEventListener('submit', async event => {
   submitButton.disabled = true;
   loadButton.disabled = true;
   fields.forEach(field => { field.readOnly = true; });
-  submitButton.textContent = 'Loading sample…';
-  status.textContent = 'Loading a local sample response. No AI request is being made.';
+  submitButton.textContent = 'Loading...';
+  status.textContent = 'Sending your request to the server...';
   try {
-    // Brief UI demonstration delay; no network activity or Python execution.
-    await new Promise(resolve => setTimeout(resolve, 450));
-    const result = await window.sampleResponses.respond(input);
-    status.textContent = result.supported
-      ? 'Sample response — prewritten for the built-in example. Your question is not analyzed.'
-      : result.message;
+    const response = await fetch('/api/ask', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(input)
+    });
+
+    const result = await response.json();
+
+    status.textContent = result.message ||
+      (response.ok ? 'Explanation received.' : 'The request failed.');
+
     for (const section of result.sections || []) {
       const heading = document.createElement('h3');
       heading.textContent = section.title;
@@ -55,12 +62,12 @@ form.addEventListener('submit', async event => {
       }
     }
   } catch {
-    status.textContent = 'The local sample could not be displayed. Please try again.';
+    status.textContent = 'Could not retrieve a response. Please try again.';
   } finally {
     panel.setAttribute('aria-busy', 'false');
     submitButton.disabled = false;
     loadButton.disabled = false;
     fields.forEach(field => { field.readOnly = false; });
-    submitButton.textContent = 'Show sample explanation';
+    submitButton.textContent = 'Get explanation';
   }
 });
