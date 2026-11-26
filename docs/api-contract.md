@@ -1,0 +1,150 @@
+# Python Troubleshooting API Contract
+
+Version: 1. Request/response validation, explicit development mock mode, web Nginx proxy routing, and frontend API submission are implemented. Live generation and retrieval below remain implementation targets. See [integration checks](integration-checks.md) for verified behavior and remaining gaps.
+
+## Endpoint and scope
+
+`POST /api/ask`, with `Content-Type: application/json`. Responses use `application/json` and the envelope below. The browser calls the relative URL `/api/ask`; the frontend Nginx service proxies it to `backend:8001`. The web stack exposes Nginx at host port 8080.
+
+Supported knowledge scope: Python built-in exceptions, tracebacks, types, functions, imports, files, and exception handling. Submitted code and tracebacks are input text and must never be executed. Third-party library troubleshooting is outside the agreed scope.
+
+## Request
+
+```json
+{
+  "question": "Why does combining this text and number produce a TypeError?",
+  "code": "\"Age: \" + 25",
+  "error": "TypeError: can only concatenate str (not \"int\") to str"
+}
+```
+
+All three fields are required strings. Reject missing, null, non-string, and whitespace-only values. Check whitespace without altering code indentation or traceback line breaks. Reject unknown fields. Limits are initial application choices, configurable consistently in API and proxy:
+
+| Field | Maximum characters |
+| --- | ---: |
+| question | 2,000 |
+| code | 12,000 |
+| error | 8,000 |
+
+Limit the complete request body to 128 KiB. Malformed JSON returns 400; unsupported content type returns 415; oversized bodies return 413; invalid fields return 422. Validation failures do not trigger retrieval or inference.
+
+## Response envelope
+
+Every application response has `status`, `message`, `sections`, `sources`, and `metrics`.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| status | string | One value from the status table below. |
+| message | string | User-facing explanation; empty string is permitted for success. |
+| sections | array | Validated explanation sections; empty for non-answer outcomes. |
+| sources | array | Retrieved context references; empty when no answer is returned. |
+| metrics | object | Available timing/generation metrics, or an empty object. |
+
+A successful answer contains exactly four ordered sections: `Meaning`, `Cause`, `Fix`, `Reasoning`. Each has a nonempty string `text` and its exact `title`. The Fix section may additionally contain a string `code`, preserving indentation. Omit `code` when absent; explicit `null` is invalid. These are structured fields, not Markdown to be split after generation.
+
+### Illustrative successful response
+
+The example source below illustrates the schema only; it is not evidence of a completed retrieval.
+
+```json
+{
+  "status": "ok",
+  "message": "",
+  "sections": [
+    {"title": "Meaning", "text": "The operation combines incompatible types."},
+    {"title": "Cause", "text": "The expression tries to concatenate a string and an integer."},
+    {"title": "Fix", "text": "Convert the integer to a string.", "code": "\"Age: \" + str(25)"},
+    {"title": "Reasoning", "text": "Both operands are now strings, so concatenation succeeds."}
+  ],
+  "sources": [
+    {"chunk_id": "example-chunk-id", "file_name": "example-python-document.pdf", "title": "Example Python document"}
+  ],
+  "metrics": {}
+}
+```
+
+## Sources and retrieval boundary
+
+The planned live integration targets the PostgreSQL `embeddings` table from the database branch (database provisioning and retrieval are not present in this checkout): `id`, `text`, `metadata` (JSONB), and `embedding` (768-dimensional vector). Generate query embeddings using the same `nomic-embed-text` model used during ingestion. Model name, version, dimension, and preprocessing must remain compatible; changing the embedding model requires coordinated reindexing.
+
+The retrieval implementation ranks chunks by cosine distance and applies a configurable relevance policy. Select an initial top-k (for example 4), then tune the relevance cutoff using representative troubleshooting questions; no universal threshold is assumed. Bound the supplied context to the generation model's context budget.
+
+Map retrieved records to the current AI client as follows:
+
+| Stored field | Internal AI-client field | Public source field |
+| --- | --- | --- |
+| id | chunk_id (new metadata field) | chunk_id |
+| text | content | Not included in the source object |
+| metadata.source | source | Do not expose the internal path |
+| metadata.file_name | file_name | file_name |
+| metadata.title | title | title |
+
+`chunk_id` and `file_name` are required source strings; `title` is an optional nonempty string. Omit `title` when absent; explicit `null` is invalid. Derive a safe basename from `metadata.source` when `file_name` is absent. Omit a blank title. Do not fabricate URLs, page numbers, titles, or source names. Current chunks do not reliably identify their PDF page, so page citations are outside version 1.
+
+The backend constructs source objects from records actually supplied as model context; the model cannot invent them. Deduplicate by chunk ID and preserve retrieval order. Display the list as **Retrieved context**: it identifies supporting context supplied to the model, not independently verified per-sentence citations. An `ok` response requires at least one context source.
+
+The API owns the flow: validate input, prepare a bounded query from question/code/error, embed it, retrieve context, call generation, validate its structured output, and assemble the response. The ingestion script remains a separate document preparation process.
+
+## Status and HTTP behavior
+
+| HTTP | status | Meaning |
+| ---: | --- | --- |
+| 200 | ok | Validated answer and retrieved context. |
+| 200 | mock | Explicit development-only fixture; message must say that no AI/retrieval ran. |
+| 200 | unsupported | Input is outside the agreed Python scope; no diagnosis returned. |
+| 200 | insufficient_context | Available documentation does not support a grounded answer. |
+| 400 | invalid_json | Request body is malformed JSON. |
+| 404 | not_found | The requested route does not exist. |
+| 405 | method_not_allowed | The route does not support the requested HTTP method. |
+| 413 | request_too_large | Complete body exceeds the configured byte limit. |
+| 415 | unsupported_media_type | Request is not application/json. |
+| 422 | invalid_request | Missing, invalid, unexpected, or over-limit fields. |
+| 429 | rate_limited | Request was rate limited. |
+| 502 | invalid_ai_response | Model/upstream output is malformed or violates the required answer schema. |
+| 503 | unavailable | Database, embedding, or inference service is unavailable. |
+| 504 | timeout | A required upstream operation exceeded its timeout. |
+| 500 | internal_error | Unexpected application failure. |
+
+Only `ok` and `mock` contain explanation sections. All other statuses return empty `sections` and `sources`, with a helpful message. A mock response uses empty `sources` and `metrics` and is enabled explicitly for development. It must never silently replace a failed live request. Use a meaningful Retry-After header for 429 when the rate limiter knows the delay.
+
+```json
+{
+  "status": "unavailable",
+  "message": "The AI assistant is temporarily unavailable. Please try again.",
+  "sections": [],
+  "sources": [],
+  "metrics": {}
+}
+```
+
+Normalize framework validation errors to this envelope. Routing failures also use this envelope, with `not_found` for HTTP 404 and `method_not_allowed` for HTTP 405. Preserve the `Allow` header on 405 responses. Configure proxy error responses to use it for this endpoint where practical; the frontend must also handle connection failures and non-JSON proxy responses with a clear generic message. Do not expose database credentials, internal paths, or exception traces in public messages.
+
+## Metrics
+
+Retain available metrics from the existing AI client: `ttft_seconds`, `tokens_per_second`, `total_latency_seconds`, and `tokens_generated`. All are nonnegative numbers; `tokens_generated` is an integer. Missing metrics are omitted, not invented. `ttft_seconds` is an estimate from model load plus prompt-evaluation durations because generation is non-streaming. `total_latency_seconds` is Ollama inference duration, not total browser request latency. Outcome belongs in top-level `status`, not a second status inside `metrics`.
+
+## Frontend integration
+
+The form now posts JSON to the relative `/api/ask` URL, renders `message` and sections with `textContent`, preserves submitted inputs after errors, and restores controls in `finally`. Load example still reads its inputs from `sample-responses.js`, but submission no longer calls its local response provider. The browser displays API error messages from JSON responses and a generic message for connection or JSON-parsing failures.
+
+Remaining work: render retrieved context when live responses become available, finish updating sample-specific labels, and validate the response envelope/status before treating sections as an answer. The error textarea currently allows 12,000 characters versus the API's 8,000. Nginx currently enforces 120 KiB versus the API's 128 KiB, and proxy errors can be HTML. These current limits differ from the target contract; the frontend catches JSON-parsing failures.
+
+Run the UI through `docker-compose.web.yml`, not a standalone static preview. See [frontend startup instructions](../frontend/README.md) for Codespaces forwarding and image rebuilds.
+
+## Acceptance checks
+
+- The browser sends question, code, and error without losing whitespace.
+- An explicit mock mode proves browser-to-Python communication and displays a mock notice.
+- Invalid inputs return the documented envelope before any embedding or inference request.
+- Successful live requests render the four ordered sections, optional fix code, and actual context sources.
+- Out-of-scope inputs and insufficient documentation produce no fabricated diagnosis.
+- Dependency failures, timeouts, rate limits, and malformed model output produce distinct documented outcomes.
+- Submitted code is never executed and public sources contain no internal filesystem paths.
+
+## Implementation order
+
+1. Implemented: request/response models and POST /api/ask with an explicit mock mode.
+2. Implemented for mock mode: Nginx API proxy routing, frontend submission, and section rendering. UI labels, source rendering, and limit alignment remain.
+3. Adapt ai_client.py to Python scope and validate structured generation; preserve available metrics.
+4. Add pgvector retrieval against the database branch schema and wire the live flow.
+5. Verify the connected services on shared Docker networks before VM deployment.
