@@ -42,6 +42,10 @@ Unsupported media types return 415, oversized JSON bodies return 413, malformed
 JSON returns 400, and invalid fields return 422, all using the public envelope.
 When multiple rules fail, media type is checked first, followed by body size,
 JSON syntax, and then fields. Unexpected failures return a generic 500 envelope.
+Unknown routes return 404 with `status: "not_found"`; unsupported methods return
+405 with `status: "method_not_allowed"` and preserve the `Allow` header.
+Optional section `code` and source `title` fields may be omitted, but explicit
+`null` is rejected; OpenAPI describes them as optional strings.
 Interactive schema documentation is available at `http://127.0.0.1:8001/docs`.
 
 Run the contract checks:

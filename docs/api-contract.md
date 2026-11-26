@@ -40,7 +40,7 @@ Every application response has `status`, `message`, `sections`, `sources`, and `
 | sources | array | Retrieved context references; empty when no answer is returned. |
 | metrics | object | Available timing/generation metrics, or an empty object. |
 
-A successful answer contains exactly four ordered sections: `Meaning`, `Cause`, `Fix`, `Reasoning`. Each has a nonempty string `text` and its exact `title`. The Fix section may additionally contain a string `code`, preserving indentation. These are structured fields, not Markdown to be split after generation.
+A successful answer contains exactly four ordered sections: `Meaning`, `Cause`, `Fix`, `Reasoning`. Each has a nonempty string `text` and its exact `title`. The Fix section may additionally contain a string `code`, preserving indentation. Omit `code` when absent; explicit `null` is invalid. These are structured fields, not Markdown to be split after generation.
 
 ### Illustrative successful response
 
@@ -79,7 +79,7 @@ Map retrieved records to the current AI client as follows:
 | metadata.file_name | file_name | file_name |
 | metadata.title | title | title |
 
-`chunk_id` and `file_name` are required source strings; `title` is an optional nonempty string. Derive a safe basename from `metadata.source` when `file_name` is absent. Omit a blank title. Do not fabricate URLs, page numbers, titles, or source names. Current chunks do not reliably identify their PDF page, so page citations are outside version 1.
+`chunk_id` and `file_name` are required source strings; `title` is an optional nonempty string. Omit `title` when absent; explicit `null` is invalid. Derive a safe basename from `metadata.source` when `file_name` is absent. Omit a blank title. Do not fabricate URLs, page numbers, titles, or source names. Current chunks do not reliably identify their PDF page, so page citations are outside version 1.
 
 The backend constructs source objects from records actually supplied as model context; the model cannot invent them. Deduplicate by chunk ID and preserve retrieval order. Display the list as **Retrieved context**: it identifies supporting context supplied to the model, not independently verified per-sentence citations. An `ok` response requires at least one context source.
 
@@ -94,6 +94,8 @@ The API owns the flow: validate input, prepare a bounded query from question/cod
 | 200 | unsupported | Input is outside the agreed Python scope; no diagnosis returned. |
 | 200 | insufficient_context | Available documentation does not support a grounded answer. |
 | 400 | invalid_json | Request body is malformed JSON. |
+| 404 | not_found | The requested route does not exist. |
+| 405 | method_not_allowed | The route does not support the requested HTTP method. |
 | 413 | request_too_large | Complete body exceeds the configured byte limit. |
 | 415 | unsupported_media_type | Request is not application/json. |
 | 422 | invalid_request | Missing, invalid, unexpected, or over-limit fields. |
@@ -115,7 +117,7 @@ Only `ok` and `mock` contain explanation sections. All other statuses return emp
 }
 ```
 
-Normalize framework validation errors to this envelope. Configure proxy error responses to use it for this endpoint where practical; the frontend must also handle connection failures and non-JSON proxy responses with a clear generic message. Do not expose database credentials, internal paths, or exception traces in public messages.
+Normalize framework validation errors to this envelope. Routing failures also use this envelope, with `not_found` for HTTP 404 and `method_not_allowed` for HTTP 405. Preserve the `Allow` header on 405 responses. Configure proxy error responses to use it for this endpoint where practical; the frontend must also handle connection failures and non-JSON proxy responses with a clear generic message. Do not expose database credentials, internal paths, or exception traces in public messages.
 
 ## Metrics
 

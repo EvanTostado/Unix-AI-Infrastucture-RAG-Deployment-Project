@@ -3,6 +3,12 @@
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic.json_schema import SkipJsonSchema
+
+
+def omit_internal_default(schema: dict) -> None:
+    """An omitted field's internal None is not a valid public JSON default."""
+    schema.pop("default", None)
 
 
 class ContractModel(BaseModel):
@@ -25,7 +31,9 @@ class AskRequest(ContractModel):
 class Section(ContractModel):
     title: Literal["Meaning", "Cause", "Fix", "Reasoning"]
     text: str
-    code: str | None = None
+    code: str | SkipJsonSchema[None] = Field(
+        default=None, json_schema_extra=omit_internal_default
+    )
 
     @field_validator("text")
     @classmethod
@@ -45,7 +53,9 @@ class Section(ContractModel):
 class Source(ContractModel):
     chunk_id: str
     file_name: str
-    title: str | None = None
+    title: str | SkipJsonSchema[None] = Field(
+        default=None, json_schema_extra=omit_internal_default
+    )
 
     @field_validator("chunk_id", "file_name", "title")
     @classmethod
@@ -72,12 +82,14 @@ class Metrics(ContractModel):
 Status = Literal[
     "ok", "mock", "unsupported", "insufficient_context", "invalid_json",
     "request_too_large", "unsupported_media_type", "invalid_request",
+    "not_found", "method_not_allowed",
     "rate_limited", "invalid_ai_response", "unavailable", "timeout", "internal_error",
 ]
 
 HTTP_STATUS: dict[Status, int] = {
     "ok": 200, "mock": 200, "unsupported": 200, "insufficient_context": 200,
-    "invalid_json": 400, "request_too_large": 413, "unsupported_media_type": 415,
+    "invalid_json": 400, "not_found": 404, "method_not_allowed": 405,
+    "request_too_large": 413, "unsupported_media_type": 415,
     "invalid_request": 422, "rate_limited": 429, "invalid_ai_response": 502,
     "unavailable": 503, "timeout": 504, "internal_error": 500,
 }

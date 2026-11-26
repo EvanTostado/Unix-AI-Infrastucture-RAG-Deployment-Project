@@ -83,9 +83,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
-        # Routing errors also keep the public envelope without exposing framework details.
-        response = outcome("invalid_request", "The requested route or method is not supported.")
-        response.status_code = exc.status_code
+        # Always select the HTTP code through the documented status mapping.
+        status = next(
+            (status for status, code in HTTP_STATUS.items() if code == exc.status_code and code >= 400),
+            "internal_error",
+        )
+        messages = {
+            "not_found": "The requested route was not found.",
+            "method_not_allowed": "The HTTP method is not supported for this route.",
+        }
+        response = outcome(status, messages.get(status, "The request could not be completed."))
         if exc.headers:
             response.headers.update(exc.headers)
         return response

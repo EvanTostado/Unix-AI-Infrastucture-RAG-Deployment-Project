@@ -4,9 +4,10 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from starlette.exceptions import HTTPException
 
 from backend.app import Settings, create_app, mock_answer
-from backend.models import AskRequest, AskResponse, Metrics, Section, Source
+from backend.models import AskRequest, AskResponse, HTTP_STATUS, Metrics, Section, Source
 
 
 VALID = {
@@ -28,9 +29,43 @@ def assert_failure(response, status_code, status):
     payload = response.json()
     assert set(payload) == {"status", "message", "sections", "sources", "metrics"}
     assert payload["status"] == status
+    assert HTTP_STATUS[status] == response.status_code
     assert payload["message"]
     assert payload["sections"] == payload["sources"] == []
     assert payload["metrics"] == {}
+
+
+@pytest.mark.parametrize("method,path,expected_http,expected_status", [
+    ("POST", "/api/missing", 404, "not_found"),
+    ("GET", "/api/ask", 405, "method_not_allowed"),
+    ("PUT", "/api/ask", 405, "method_not_allowed"),
+    ("OPTIONS", "/api/ask", 405, "method_not_allowed"),
+])
+def test_routing_errors_follow_status_mapping(client, method, path, expected_http, expected_status):
+    response = client.request(method, path)
+    assert_failure(response, expected_http, expected_status)
+    if expected_http == 405:
+        assert response.headers["allow"] == "POST"
+
+
+@pytest.mark.parametrize("http_code,expected_http,expected_status", [
+    (422, 422, "invalid_request"),
+    (429, 429, "rate_limited"),
+    (503, 503, "unavailable"),
+    (418, 500, "internal_error"),
+])
+def test_framework_http_errors_follow_status_mapping(http_code, expected_http, expected_status):
+    app = create_app(Settings(mock_mode=True))
+
+    @app.get("/test-http-error")
+    async def fail():
+        raise HTTPException(http_code, detail="private details", headers={"Retry-After": "5"})
+
+    with TestClient(app) as client:
+        response = client.get("/test-http-error")
+    assert_failure(response, expected_http, expected_status)
+    assert "private details" not in response.text
+    assert response.headers["retry-after"] == "5"
 
 
 def test_mock_is_explicit_fixed_fixture(client):
@@ -165,6 +200,33 @@ def test_openapi_describes_contract(client):
     assert set(schema["required"]) == set(VALID)
     assert schema["additionalProperties"] is False
     assert "503" in operation["responses"]
+    assert {"404", "405"} <= operation["responses"].keys()
+
+
+@pytest.mark.parametrize("model_name,field", [("Section", "code"), ("Source", "title")])
+def test_openapi_optional_strings_are_not_nullable(client, model_name, field):
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    schema = schemas[model_name]
+    assert field not in schema.get("required", [])
+    assert schema["properties"][field]["type"] == "string"
+    assert "anyOf" not in schema["properties"][field]
+    assert "default" not in schema["properties"][field]
+
+
+@pytest.mark.parametrize("mode", ["validation", "serialization"])
+@pytest.mark.parametrize("model,field,payload,value", [
+    (Section, "code", {"title": "Fix", "text": "Use a conversion."}, "if True:\n    pass\n"),
+    (Source, "title", {"chunk_id": "chunk-1", "file_name": "python.pdf"}, "Python reference"),
+])
+def test_optional_string_schema_matches_runtime(mode, model, field, payload, value):
+    schema = model.model_json_schema(mode=mode)
+    assert field not in schema.get("required", [])
+    assert schema["properties"][field]["type"] == "string"
+    assert "default" not in schema["properties"][field]
+    assert field not in model.model_validate(payload).model_dump(exclude_unset=True)
+    assert model.model_validate({**payload, field: value}).model_dump(exclude_unset=True)[field] == value
+    with pytest.raises(ValidationError):
+        model.model_validate({**payload, field: None})
 
 
 @pytest.mark.parametrize("change", [
