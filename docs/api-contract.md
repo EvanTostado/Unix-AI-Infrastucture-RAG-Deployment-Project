@@ -1,10 +1,10 @@
 # Python Troubleshooting API Contract
 
-Version: 1 (implementation target). This document specifies proposed behavior; it does not mean the endpoint is implemented.
+Version: 1. Request/response validation, explicit development mock mode, web Nginx proxy routing, and frontend API submission are implemented. Live generation and retrieval below remain implementation targets. See [integration checks](integration-checks.md) for verified behavior and remaining gaps.
 
 ## Endpoint and scope
 
-`POST /api/ask`, with `Content-Type: application/json`. Responses use `application/json` and the envelope below. The browser calls the relative URL `/api/ask`; the frontend Nginx service will proxy it to the Python API.
+`POST /api/ask`, with `Content-Type: application/json`. Responses use `application/json` and the envelope below. The browser calls the relative URL `/api/ask`; the frontend Nginx service proxies it to `backend:8001`. The web stack exposes Nginx at host port 8080.
 
 Supported knowledge scope: Python built-in exceptions, tracebacks, types, functions, imports, files, and exception handling. Submitted code and tracebacks are input text and must never be executed. Third-party library troubleshooting is outside the agreed scope.
 
@@ -65,7 +65,7 @@ The example source below illustrates the schema only; it is not evidence of a co
 
 ## Sources and retrieval boundary
 
-Use the existing PostgreSQL `embeddings` table: `id`, `text`, `metadata` (JSONB), and `embedding` (768-dimensional vector). Generate query embeddings using the same `nomic-embed-text` model used during ingestion. Model name, version, dimension, and preprocessing must remain compatible; changing the embedding model requires coordinated reindexing.
+The planned live integration targets the PostgreSQL `embeddings` table from the database branch (database provisioning and retrieval are not present in this checkout): `id`, `text`, `metadata` (JSONB), and `embedding` (768-dimensional vector). Generate query embeddings using the same `nomic-embed-text` model used during ingestion. Model name, version, dimension, and preprocessing must remain compatible; changing the embedding model requires coordinated reindexing.
 
 The retrieval implementation ranks chunks by cosine distance and applies a configurable relevance policy. Select an initial top-k (for example 4), then tune the relevance cutoff using representative troubleshooting questions; no universal threshold is assumed. Bound the supplied context to the generation model's context budget.
 
@@ -125,7 +125,11 @@ Retain available metrics from the existing AI client: `ttft_seconds`, `tokens_pe
 
 ## Frontend integration
 
-Replace the sample provider call with POST /api/ask after the endpoint is available. Keep the existing textContent-based section rendering, add retrieved-context rendering, and update sample-specific labels. Preserve submitted values after errors and restore the enabled form in all completion paths. Inspect the response status and envelope rather than assuming every response is an answer.
+The form now posts JSON to the relative `/api/ask` URL, renders `message` and sections with `textContent`, preserves submitted inputs after errors, and restores controls in `finally`. Load example still reads its inputs from `sample-responses.js`, but submission no longer calls its local response provider. The browser displays API error messages from JSON responses and a generic message for connection or JSON-parsing failures.
+
+Remaining work: render retrieved context when live responses become available, finish updating sample-specific labels, and validate the response envelope/status before treating sections as an answer. The error textarea currently allows 12,000 characters versus the API's 8,000. Nginx currently enforces 120 KiB versus the API's 128 KiB, and proxy errors can be HTML. These current limits differ from the target contract; the frontend catches JSON-parsing failures.
+
+Run the UI through `docker-compose.web.yml`, not a standalone static preview. See [frontend startup instructions](../frontend/README.md) for Codespaces forwarding and image rebuilds.
 
 ## Acceptance checks
 
@@ -139,8 +143,8 @@ Replace the sample provider call with POST /api/ask after the endpoint is availa
 
 ## Implementation order
 
-1. Add request/response models and POST /api/ask with an explicit mock mode.
-2. Add Nginx API proxy routing and connect frontend submission and rendering.
+1. Implemented: request/response models and POST /api/ask with an explicit mock mode.
+2. Implemented for mock mode: Nginx API proxy routing, frontend submission, and section rendering. UI labels, source rendering, and limit alignment remain.
 3. Adapt ai_client.py to Python scope and validate structured generation; preserve available metrics.
 4. Add pgvector retrieval against the database branch schema and wire the live flow.
 5. Verify the connected services on shared Docker networks before VM deployment.
