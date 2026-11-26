@@ -2,7 +2,7 @@
 
 A containerized AI project aimed at helping users understand and fix **vanilla Python errors**. The intended chatbot combines a user's question, code, and traceback with relevant documentation through retrieval-augmented generation (RAG), then explains what went wrong, why it happened, and how to fix it.
 
-Google Cloud Platform (GCP) is the intended deployment environment. This repository currently contains a standalone frontend prototype and a Docker Compose AI inference tier; it does not yet provide a complete, connected RAG application or GCP provisioning configuration.
+Google Cloud Platform (GCP) is the intended deployment environment. This repository currently contains a frontend connected to a FastAPI development mock through Nginx, plus a separate Docker Compose AI inference tier; it does not yet provide a complete, connected RAG application or GCP provisioning configuration.
 
 ## What the chatbot is designed to do
 
@@ -38,16 +38,16 @@ It is important to notice the dataset includes information about third-party dat
 
 | Component | What is available |
 | --- | --- |
-| Frontend | Plain HTML, CSS, and JavaScript with question, code, and error fields; validation; a loading state; and one prewritten TypeError explanation. |
+| Frontend | Plain HTML, CSS, and JavaScript with question, code, and error fields; validation; a loading state; and POST requests to `/api/ask`. Renders the API message and explanation sections using `textContent`. |
 | AI inference | Ollama configured with `qwen2.5:1.5b` for generation and `nomic-embed-text` for embeddings. |
-| Container orchestration | Docker Compose configuration for model initialization, two inference replicas, shared model storage, and an Nginx proxy. |
-| Request routing | Nginx least-connections balancing, request rate limiting, proxy timeouts, and upstream retry configuration. |
+| Container orchestration | `docker-compose.web.yml` builds frontend Nginx and Python 3.12 API containers. The separate AI Compose file manages model initialization, two inference replicas, shared model storage, and an AI proxy. |
+| Request routing | Web Nginx serves the UI on host port 8080 and proxies `/api/` to `backend:8001`. The separate AI Nginx provides least-connections balancing, rate limiting, timeouts, and retries. |
 | Python client | Helpers for generating embeddings and requesting answers using caller-supplied document chunks. Responses include source names and inference metrics, with rate-limit and request-failure handling. |
 | Application API | FastAPI `POST /api/ask` with strict request/response validation and explicit development mock mode. Live mode returns unavailable until retrieval and inference are connected. |
-| Retrieval and integration | Document ingestion, a vector store, retrieval logic, and frontend-to-backend connectivity are not implemented in this checkout. |
+| Retrieval and integration | Frontend-to-backend communication is connected in mock mode. Document ingestion, a vector store, retrieval logic, and live AI orchestration are not implemented in this checkout. |
 | GCP deployment | Deployment target; cloud infrastructure and deployment automation are not included yet. |
 
-**The frontend currently runs in sample mode.** It makes no AI requests, performs no document retrieval, and never executes submitted code. Only the built-in example is supported; other inputs receive an unsupported-input message.
+**The web stack currently runs in development mock mode.** The browser calls the backend, which returns the same fixed TypeError explanation for every valid request. It makes no AI requests, performs no document retrieval, and never executes submitted code. The mock is a connection check, not a diagnosis of the submitted input.
 
 The AI client's prompt, fallback message, and standalone test still refer to Linux administration. They are scaffolding that needs to be adapted to the Python troubleshooting scope before integration.
 
@@ -87,24 +87,31 @@ The web load balancer distributes browser traffic across the web replicas. The a
 5. Route inference through Nginx to an Ollama replica.
 6. Return an explanation and supporting sources to the frontend.
 
-The repository provides the inference configuration, client helpers, and a validation/mock API for parts of this workflow. Indexing, retrieval, live API orchestration, and UI integration remain future work.
+The repository provides the inference configuration, client helpers, and a validation/mock API for parts of this workflow. Browser-to-API integration is implemented; indexing, retrieval, and live API orchestration remain future work.
 
 ## Repository layout
 
 ```text
 .
 ├── README.md
+├── docker-compose.web.yml        # Frontend + API development mock stack
+├── docs/
+│   ├── api-contract.md           # API schema and live-flow target
+│   └── integration-checks.md     # Verified results and browser checklist
 ├── backend/
 │   ├── README.md                 # API setup, mock mode, and contract checks
+│   ├── Dockerfile                # Python 3.12 + Uvicorn on port 8001
 │   ├── app.py                    # POST /api/ask and envelope error handling
 │   ├── models.py                 # Validated request and response models
 │   └── tests/test_api.py         # Request and response contract checks
 ├── frontend/
-│   ├── README.md                 # Prototype behavior and preview instructions
+│   ├── README.md                 # Compose/Codespaces startup and troubleshooting
+│   ├── Dockerfile                # Static assets copied into Nginx image
+│   ├── nginx.conf                # Static files and /api/ reverse proxy
 │   ├── index.html                # Troubleshooting form and explanation panel
 │   ├── styles.css                # Responsive interface styling
 │   ├── app.js                    # Form validation and response rendering
-│   └── sample-responses.js       # Supported example and prewritten explanation
+│   └── sample-responses.js       # Example inputs and legacy local response provider
 └── ai-tier/
     ├── SETUP.md                  # AI-tier setup notes
     ├── docker-compose.ai.yml     # Model initialization, inference, and proxy services
@@ -112,24 +119,36 @@ The repository provides the inference configuration, client helpers, and a valid
     └── ai_client.py              # Embedding and context-based generation helpers
 ```
 
-## Run the frontend prototype
+## Run the frontend and API
 
-From the repository root, serve the frontend locally with Python 3:
+Prerequisites: Docker with the Docker Compose plugin and internet access for the first image/dependency downloads. From the repository root:
 
 ```bash
-python3 -m http.server 8000 --bind 127.0.0.1 --directory frontend
+docker compose -f docker-compose.web.yml up -d --build
+docker compose -f docker-compose.web.yml ps
 ```
 
-Open `http://127.0.0.1:8000`, select **Load example**, then **Show sample explanation**. Stop the server with `Ctrl+C`.
+Open `http://localhost:8080`, then select **Load example → Get explanation**. In GitHub Codespaces, add `8080` in the **Ports** tab with **Forward a Port**, then use its **Open in Browser** link. Ports 3000 and 3001 are not the web endpoint configured by this Compose file.
 
-The frontend runs independently of Docker and Ollama. For the Visual Studio Code Live Preview alternative, see [the frontend README](frontend/README.md).
+The request path is browser → web Nginx on port 8080 → FastAPI at `backend:8001` on the Compose network. The backend is not published directly to the host. Compose explicitly sets `API_MOCK_MODE: "true"` (underscores are required). Ollama and a database are not needed for this mock flow.
 
-## Run the API in development mock mode
+Opening `index.html` directly, using Live Preview, or serving the folder with `python -m http.server` does not provide the `/api/` proxy. Use the Compose URL for integration testing.
 
-See [the backend README](backend/README.md) for setup, a sample request, configuration,
-and tests. Mock mode must be explicitly enabled with `API_MOCK_MODE=true` and
-returns a fixed example with a notice that no AI/retrieval ran. The frontend
-continues to run independently until the next integration step.
+The Dockerfiles copy source files into images; rebuild after frontend or backend code changes. After changing only the backend environment in Compose, recreate the backend with `docker compose -f docker-compose.web.yml up -d --force-recreate backend`. A restart alone does not apply changed environment settings.
+
+For frontend-only edits:
+
+```bash
+docker compose -f docker-compose.web.yml up -d --build frontend
+```
+
+Hard-refresh the browser with **Ctrl+Shift+R** (Windows/Linux) or **Command+Shift+R** (Mac). Stop the web stack with:
+
+```bash
+docker compose -f docker-compose.web.yml down
+```
+
+See [frontend startup and troubleshooting](frontend/README.md), [backend setup and configuration](backend/README.md), and [integration checks](docs/integration-checks.md). The backend README also covers running the API directly on host port 8001 for API-only development.
 
 ## Run the AI inference tier
 
@@ -168,4 +187,4 @@ See [the AI-tier setup notes](ai-tier/SETUP.md) for additional context.
 
 ## Path to a connected GCP deployment
 
-The next implementation steps follow [the API contract](docs/api-contract.md): connect the frontend through Nginx, align and validate structured Python generation, and add vector retrieval to the API. Documentation ingestion and GCP hosting, networking, access controls, and deployment automation must also be defined before the project can be presented as a deployed end-to-end service.
+The next implementation steps follow [the API contract](docs/api-contract.md): finish the documented UI/proxy limits, align and validate structured Python generation, and add vector retrieval to the API. Documentation ingestion and GCP hosting, networking, access controls, and deployment automation must also be defined before the project can be presented as a deployed end-to-end service.
