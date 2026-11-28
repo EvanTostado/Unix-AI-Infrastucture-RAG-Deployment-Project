@@ -1,0 +1,6 @@
+17:38:23Z  $ uname -srm; python3 --version; docker --version; docker compose version; git rev-parse --short HEAD
+17:38:23Z  $ docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+17:38:23Z  $ python3 -u tests/ai_tests.py preflight --outdir tests/results/20261128T173823Z 
+17:38:25Z  $ python3 -u tests/ai_tests.py load --outdir tests/results/20261128T173823Z 
+17:42:39Z  $ python3 -u tests/ai_tests.py ratelimit --outdir tests/results/20261128T173823Z 
+17:42:52Z  $ python3 tests/ai_tests.py report --outdir tests/results/20261128T173823Z

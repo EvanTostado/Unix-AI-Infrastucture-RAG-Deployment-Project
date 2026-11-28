@@ -1,0 +1,54 @@
+{
+  "test": "ratelimit",
+  "started": "2026-11-28T17:42:39Z",
+  "ended": "2026-11-28T17:42:52Z",
+  "result": "PASS",
+  "checks": [
+    {
+      "id": "R1",
+      "description": "HTTP 429 returned during the burst",
+      "status": "PASS",
+      "detail": "49 of 60 requests got 429 (Server header on 429s: ['nginx/1.27.3'])"
+    },
+    {
+      "id": "R2",
+      "description": "Limiter admits only about burst + rate x window requests",
+      "status": "PASS",
+      "detail": "accepted=11, expected <= 14 (burst 10 + 1 + 5.0/s x 0.08s + 2 slack)"
+    },
+    {
+      "id": "R3",
+      "description": "Accepted requests were served with no 5xx / connection errors",
+      "status": "PASS",
+      "detail": "200=11, 5xx=0, connection errors/timeouts=0"
+    },
+    {
+      "id": "R4",
+      "description": "Service answers a normal request after the burst",
+      "status": "PASS",
+      "detail": "HTTP 200 in 0.59s"
+    },
+    {
+      "id": "R5",
+      "description": "All AI containers still running (no restarts) after the burst",
+      "status": "PASS",
+      "detail": "checked ['ai-tier-ollama-1', 'ai-tier-ollama-2', 'ai-lb']"
+    }
+  ],
+  "metrics": {
+    "burst": 60,
+    "status_codes": {
+      "429": 49,
+      "200": 11
+    },
+    "send_window_s": 0.07737374305725098,
+    "accepted": 11,
+    "accepted_upper_bound": 14,
+    "server_header_on_429": [
+      "nginx/1.27.3"
+    ]
+  },
+  "commands": [
+    "2026-11-28T17:42:39Z  $ docker ps --filter label=com.docker.compose.service=ollama --format '{{.Names}}'"
+  ]
+}

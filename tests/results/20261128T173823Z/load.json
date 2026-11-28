@@ -1,0 +1,131 @@
+{
+  "test": "load",
+  "started": "2026-11-28T17:38:25Z",
+  "ended": "2026-11-28T17:42:39Z",
+  "result": "PASS",
+  "checks": [
+    {
+      "id": "L1",
+      "description": "Every concurrency level completed with at least one successful request",
+      "status": "PASS",
+      "detail": "c=1: 20/20 ok, c=5: 20/20 ok, c=10: 20/20 ok"
+    },
+    {
+      "id": "L2",
+      "description": "Error rate <= 5.0% at every level",
+      "status": "PASS",
+      "detail": "c=1: 0.0%, c=5: 0.0%, c=10: 0.0%"
+    },
+    {
+      "id": "L3",
+      "description": "Latency (p50/p95), tokens/sec and error rate recorded for each level (CSV)",
+      "status": "PASS",
+      "detail": "tests/results/20261128T173823Z/load_results.csv"
+    },
+    {
+      "id": "L4",
+      "description": "Results charted",
+      "status": "PASS",
+      "detail": "load_chart.png"
+    },
+    {
+      "id": "L5",
+      "description": "Bottleneck identified from the data",
+      "status": "PASS",
+      "detail": "CPU - inference is compute-bound on the 2.0-CPU replica quota"
+    },
+    {
+      "id": "L6",
+      "description": "Containers still running and healthy after the load test",
+      "status": "PASS",
+      "detail": "{'ai-tier-ollama-1': ('running', 'healthy'), 'ai-tier-ollama-2': ('running', 'healthy'), 'ai-lb': ('running', 'none')}"
+    }
+  ],
+  "metrics": {
+    "levels": [
+      {
+        "concurrency": 1,
+        "requests": 20,
+        "ok": 20,
+        "errors": 0,
+        "rate_limited_429": 0,
+        "error_rate_pct": 0.0,
+        "p50_s": 4.152462211000966,
+        "p95_s": 5.460023677249958,
+        "max_s": 8.804124173002492,
+        "mean_s": 4.3776543944002695,
+        "tps_per_request_mean": 13.03972539112365,
+        "tps_aggregate": 12.197616406533422,
+        "throughput_rps": 0.22841978289388432,
+        "wall_s": 87.55809040100212,
+        "tokens_total": 1068,
+        "replica_cpu_avg_pct_of_limit": 46.431363636363635,
+        "replica_cpu_peak_pct_of_limit": 99.2,
+        "replica_mem_peak_pct": 36.17,
+        "lb_cpu_peak_pct_of_limit": 0.08
+      },
+      {
+        "concurrency": 5,
+        "requests": 20,
+        "ok": 20,
+        "errors": 0,
+        "rate_limited_429": 0,
+        "error_rate_pct": 0.0,
+        "p50_s": 16.57728631700047,
+        "p95_s": 22.64642902074793,
+        "max_s": 24.678956751999067,
+        "mean_s": 16.652992935649856,
+        "tps_per_request_mean": 4.402128293682744,
+        "tps_aggregate": 15.200492261875507,
+        "throughput_rps": 0.2833269759902238,
+        "wall_s": 70.58981916600169,
+        "tokens_total": 1073,
+        "replica_cpu_avg_pct_of_limit": 88.41111111111111,
+        "replica_cpu_peak_pct_of_limit": 98.595,
+        "replica_mem_peak_pct": 36.88,
+        "lb_cpu_peak_pct_of_limit": 0.08
+      },
+      {
+        "concurrency": 10,
+        "requests": 20,
+        "ok": 20,
+        "errors": 0,
+        "rate_limited_429": 0,
+        "error_rate_pct": 0.0,
+        "p50_s": 30.92400295599873,
+        "p95_s": 39.284977178750886,
+        "max_s": 40.666408559001866,
+        "mean_s": 29.59169706499997,
+        "tps_per_request_mean": 4.571183125568087,
+        "tps_aggregate": 15.113967935651509,
+        "throughput_rps": 0.2728153056976807,
+        "wall_s": 73.30966988400178,
+        "tokens_total": 1108,
+        "replica_cpu_avg_pct_of_limit": 91.27361111111111,
+        "replica_cpu_peak_pct_of_limit": 97.47,
+        "replica_mem_peak_pct": 37.52,
+        "lb_cpu_peak_pct_of_limit": 0.06
+      }
+    ],
+    "bottleneck": "CPU - inference is compute-bound on the 2.0-CPU replica quota",
+    "evidence": [
+      "Per-request speed went 13.0 -> 4.6 tok/s from c=1 to c=10 (-65% change in per-request generation speed)",
+      "Aggregate throughput scaled 1.24x (12.2 -> 15.1 tok/s) for 10x the users (inference slots available: 4)",
+      "p50 latency grew 7.45x from c=1 to c=10 (4.15s -> 30.92s)",
+      "Replica CPU at c=10: avg 91% / peak 99% of the 2.0 CPU limit; peak memory 38% of limit; nginx peak 0% of its CPU limit"
+    ],
+    "csv": "load_results.csv",
+    "chart": "load_chart.png",
+    "params": {
+      "requests_per_level": 20,
+      "num_predict": 64,
+      "model": "qwen2.5:1.5b"
+    }
+  },
+  "commands": [
+    "2026-11-28T17:38:25Z  $ docker ps --filter label=com.docker.compose.service=ollama --format '{{.Names}}'",
+    "2026-11-28T17:38:30Z  $ docker stats --no-stream ... ai-tier-ollama-1 ai-tier-ollama-2 ai-lb  (sampled during c=1)",
+    "2026-11-28T17:40:03Z  $ docker stats --no-stream ... ai-tier-ollama-1 ai-tier-ollama-2 ai-lb  (sampled during c=5)",
+    "2026-11-28T17:41:19Z  $ docker stats --no-stream ... ai-tier-ollama-1 ai-tier-ollama-2 ai-lb  (sampled during c=10)"
+  ]
+}

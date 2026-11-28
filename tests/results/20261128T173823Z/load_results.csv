@@ -1,0 +1,4 @@
+concurrency,requests,ok,errors,rate_limited_429,error_rate_pct,p50_s,p95_s,max_s,mean_s,tps_per_request_mean,tps_aggregate,throughput_rps,wall_s,tokens_total,replica_cpu_avg_pct_of_limit,replica_cpu_peak_pct_of_limit,replica_mem_peak_pct,lb_cpu_peak_pct_of_limit
+1,20,20,0,0,0.0,4.152,5.46,8.804,4.378,13.04,12.198,0.228,87.558,1068,46.431,99.2,36.17,0.08
+5,20,20,0,0,0.0,16.577,22.646,24.679,16.653,4.402,15.2,0.283,70.59,1073,88.411,98.595,36.88,0.08
+10,20,20,0,0,0.0,30.924,39.285,40.666,29.592,4.571,15.114,0.273,73.31,1108,91.274,97.47,37.52,0.06

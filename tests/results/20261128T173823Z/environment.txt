@@ -1,0 +1,12 @@
+date_utc:  2026-11-28T17:38:23Z
+host:      Linux 7.3.6-arch1-1 x86_64
+python:    Python 3.14.10
+docker:    Docker version 29.10.1, build c48360f51c
+compose:   Docker Compose version 5.8.0
+git:       956bc9f
+endpoint:  http://127.0.0.1:11434
+
+NAMES              IMAGE                 STATUS
+ai-lb              nginx:1.27.3-alpine   Up 6 minutes
+ai-tier-ollama-2   ollama/ollama:0.5.7   Up 7 minutes (healthy)
+ai-tier-ollama-1   ollama/ollama:0.5.7   Up 7 minutes (healthy)
