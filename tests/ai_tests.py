@@ -708,7 +708,7 @@ def cmd_failover(a):
 
     restarts_before = restart_count(target)
     kill_ts = time.time()
-    rc, out, err = sh(["docker", "kill", target])
+    rc, out, err = sh(["docker", "exec", target, "kill", "-TERM", "1"]) 
     rep.check("F3", f"Inference replica '{target}' killed during active requests", "PASS" if rc == 0 else "FAIL",
               (out or err) + f" (RestartCount before: {restarts_before})")
     if rc != 0:

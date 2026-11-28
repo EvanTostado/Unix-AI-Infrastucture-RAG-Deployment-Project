@@ -1,7 +1,7 @@
 {
   "test": "preflight",
-  "started": "2026-11-28T17:51:17Z",
-  "ended": "2026-11-28T17:51:19Z",
+  "started": "2026-11-28T18:16:00Z",
+  "ended": "2026-11-28T18:16:00Z",
   "result": "PASS",
   "checks": [
     {
@@ -32,11 +32,11 @@
       "id": "P5",
       "description": "A real inference request succeeds end-to-end",
       "status": "PASS",
-      "detail": "HTTP 200 in 1.35s"
+      "detail": "HTTP 200 in 0.59s"
     }
   ],
   "metrics": {},
   "commands": [
-    "2026-11-28T17:51:17Z  $ docker ps --filter label=com.docker.compose.service=ollama --format '{{.Names}}'"
+    "2026-11-28T18:16:00Z  $ docker ps --filter label=com.docker.compose.service=ollama --format '{{.Names}}'"
   ]
 }

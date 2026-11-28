@@ -1,0 +1,5 @@
+18:16:00Z  $ uname -srm; python3 --version; docker --version; docker compose version; git rev-parse --short HEAD
+18:16:00Z  $ docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+18:16:00Z  $ python3 -u tests/ai_tests.py preflight --outdir tests/results/20261128T181559Z 
+18:16:00Z  $ python3 -u tests/ai_tests.py failover --outdir tests/results/20261128T181559Z --confirm-disruptive
+18:17:09Z  $ python3 tests/ai_tests.py report --outdir tests/results/20261128T181559Z
