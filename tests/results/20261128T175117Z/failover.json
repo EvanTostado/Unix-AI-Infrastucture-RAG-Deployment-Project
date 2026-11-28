@@ -1,0 +1,94 @@
+{
+  "test": "failover",
+  "started": "2026-11-28T17:51:19Z",
+  "ended": "2026-11-28T17:55:48Z",
+  "result": "FAIL",
+  "checks": [
+    {
+      "id": "F1",
+      "description": "Two inference replicas running and target is one of them",
+      "status": "PASS",
+      "detail": "replicas=['ai-tier-ollama-1', 'ai-tier-ollama-2']; will kill: ai-tier-ollama-1"
+    },
+    {
+      "id": "F2",
+      "description": "Baseline: requests succeed before the failure",
+      "status": "PASS",
+      "detail": "18/18 succeeded"
+    },
+    {
+      "id": "F3",
+      "description": "Inference replica 'ai-tier-ollama-1' killed during active requests",
+      "status": "PASS",
+      "detail": "ai-tier-ollama-1 (RestartCount before: 0)"
+    },
+    {
+      "id": "F4",
+      "description": "Requests started after the kill keep succeeding via the remaining replica (>= 95.0%)",
+      "status": "PASS",
+      "detail": "204/204 = 100.0% ok; max latency 12.36s; failures: none"
+    },
+    {
+      "id": "F5",
+      "description": "Requests that were mid-flight on the killed replica",
+      "status": "WARN",
+      "detail": "2 of 2 in-flight requests failed. nginx does not retry a POST that was already sent to an upstream unless 'non_idempotent' is added to proxy_next_upstream; this is the expected loss window."
+    },
+    {
+      "id": "F6",
+      "description": "Failure detected: replica left running/healthy (Docker state + healthcheck)",
+      "status": "PASS",
+      "detail": "detected at t+0.2s; timeline: exited/unhealthy@0.2s"
+    },
+    {
+      "id": "F7",
+      "description": "Load balancer stops routing to the failed replica (nginx passive health check)",
+      "status": "PASS",
+      "detail": "18 upstream error log lines since the kill; bound 28 (max_fails 2 + 1 probe per 10.0s fail_timeout over 240s + 2). Without removal, about half of all requests would log an error. Sample: 2026/11/28 17:51:44 [error] 30#30: *53 upstream prematurely closed connection while reading response header from upstream, client: 172.19.0.1, server: , request"
+    },
+    {
+      "id": "F8",
+      "description": "Replica recovered automatically (Docker restart policy, no manual action)",
+      "status": "FAIL",
+      "detail": "not healthy within 240.0s. Last state: ('exited', 'unhealthy'). Review, then restore manually with: docker start ai-tier-ollama-1"
+    },
+    {
+      "id": "F9",
+      "description": "Recovered replica serves client traffic again",
+      "status": "SKIP",
+      "detail": "replica did not recover"
+    },
+    {
+      "id": "F10",
+      "description": "End state: both replicas running and healthy, last requests succeed",
+      "status": "FAIL",
+      "detail": "states={'ai-tier-ollama-1': ('exited', 'unhealthy'), 'ai-tier-ollama-2': ('running', 'healthy')}; last 3 requests ok=[True, True, True]"
+    }
+  ],
+  "metrics": {
+    "target": "ai-tier-ollama-1",
+    "kill_time_utc": "2026-11-28T17:51:44Z",
+    "detected_after_s": 0.17657804489135742,
+    "recovered_after_s": null,
+    "counts": {
+      "pre": 18,
+      "in_flight": 2,
+      "post": 204
+    },
+    "post_success_pct": 100.0,
+    "timeline": [
+      {
+        "t": 0.2,
+        "state": "exited",
+        "health": "unhealthy"
+      }
+    ],
+    "csv": "failover_requests.csv",
+    "chart": "failover_timeline.png"
+  },
+  "commands": [
+    "2026-11-28T17:51:19Z  $ docker ps --filter label=com.docker.compose.service=ollama --format '{{.Names}}'",
+    "2026-11-28T17:51:44Z  $ docker kill ai-tier-ollama-1",
+    "2026-11-28T17:55:48Z  $ docker logs --since 2026-11-28T17:51:44.864721Z ai-lb"
+  ]
+}

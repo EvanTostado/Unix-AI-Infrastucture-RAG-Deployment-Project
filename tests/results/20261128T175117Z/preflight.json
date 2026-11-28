@@ -1,0 +1,42 @@
+{
+  "test": "preflight",
+  "started": "2026-11-28T17:51:17Z",
+  "ended": "2026-11-28T17:51:19Z",
+  "result": "PASS",
+  "checks": [
+    {
+      "id": "P1",
+      "description": "AI endpoint reachable through the load balancer",
+      "status": "PASS",
+      "detail": "GET http://127.0.0.1:11434/ -> HTTP 200"
+    },
+    {
+      "id": "P2",
+      "description": "Model 'qwen2.5:1.5b' is staged",
+      "status": "PASS",
+      "detail": "models listed: ['nomic-embed-text:latest', 'qwen2.5:1.5b']"
+    },
+    {
+      "id": "P3",
+      "description": "Two inference replicas are running",
+      "status": "PASS",
+      "detail": "found 2: ['ai-tier-ollama-1', 'ai-tier-ollama-2']"
+    },
+    {
+      "id": "P4",
+      "description": "Load balancer container 'ai-lb' is running",
+      "status": "PASS",
+      "detail": "state=running health=none"
+    },
+    {
+      "id": "P5",
+      "description": "A real inference request succeeds end-to-end",
+      "status": "PASS",
+      "detail": "HTTP 200 in 1.35s"
+    }
+  ],
+  "metrics": {},
+  "commands": [
+    "2026-11-28T17:51:17Z  $ docker ps --filter label=com.docker.compose.service=ollama --format '{{.Names}}'"
+  ]
+}

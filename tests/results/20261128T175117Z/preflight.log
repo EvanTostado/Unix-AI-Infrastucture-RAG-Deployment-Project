@@ -1,0 +1,12 @@
+[17:51:17] ======================================================================
+[17:51:17] PREFLIGHT (read-only)
+[17:51:17] ======================================================================
+[17:51:17] [PASS] P1: AI endpoint reachable through the load balancer  -- GET http://127.0.0.1:11434/ -> HTTP 200
+[17:51:17] [PASS] P2: Model 'qwen2.5:1.5b' is staged  -- models listed: ['nomic-embed-text:latest', 'qwen2.5:1.5b']
+[17:51:17] $ docker ps --filter label=com.docker.compose.service=ollama --format '{{.Names}}'
+[17:51:17] [PASS] P3: Two inference replicas are running  -- found 2: ['ai-tier-ollama-1', 'ai-tier-ollama-2']
+[17:51:17] [PASS] P4: Load balancer container 'ai-lb' is running  -- state=running health=none
+[17:51:17] Sending one small generation request ...
+[17:51:19]   probe HTTP 200   1.35s tokens=8    tps= 16.3
+[17:51:19] [PASS] P5: A real inference request succeeds end-to-end  -- HTTP 200 in 1.35s
+[17:51:19] RESULT preflight: PASS
